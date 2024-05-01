@@ -1,0 +1,274 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Resources:
+  #
+  # Lambda function - event handler (new, update order)
+  #
+  HandleOrderEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleOrderEvents.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrdersTable: !Ref OrdersTable
+          POWERTOOLS_SERVICE_NAME: handleOrders
+      Events:
+        CreateUpdateOrderRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+            Pattern:
+              source:
+                - prefix: 'orders.events'
+              detail-type:
+                - "New order created"
+                - "Order updated"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/handleOrderEvents.js
+
+  HandleOrderEventsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleOrderEventsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleOrderEventsFunction}"
+
+  #
+  # Lambda function - stream handler
+  #
+  StreamHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleStream.handler
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - appsync:GraphQL
+            Resource: !Sub "${OrdersGraphqlApi.Arn}/*"
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrderApiEndpoint: !GetAtt OrdersGraphqlApi.GraphQLUrl
+          POWERTOOLS_SERVICE_NAME: handleStream
+      Events:
+        StreamEvent:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt OrdersTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            FilterCriteria:
+              Filters:
+                - Pattern: '{ "eventName": [ "INSERT", "MODIFY" ], "dynamodb": { "NewImage": { "type": { "S": [ "Order" ] } } } }'
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/handleStream.js
+
+  StreamHandlerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: StreamHandlerFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${StreamHandlerFunction}"
+
+  #
+  # GraphQL API
+  #
+  OrdersGraphqlApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      Name: Pattern1-OrdersGraphqlApi
+      SchemaUri: ../graphql/schema.graphql
+      Auth:
+        Type: AWS_IAM
+      LogConfig:
+        FieldLogLevel: ERROR
+      DataSources:
+        DynamoDb:
+          OrdersTableDataSource:
+            Permissions:
+              - Read
+              - Write
+            TableArn: !GetAtt OrdersTable.Arn
+            TableName: !Ref OrdersTable
+      Functions:
+        createOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt NoneDataSource.Name
+          CodeUri: ../graphql/resolvers/none.createOrder.js
+        getOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/getOrder.js
+        orderItems:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/Order.items.js
+        updateOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt NoneDataSource.Name
+          CodeUri: ../graphql/resolvers/none.updateOrder.js
+      Resolvers:
+        Order:
+          items:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - orderItems
+        Mutation:
+          createOrder:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - createOrder
+              - getOrder
+          updateOrder:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - updateOrder
+              - getOrder
+        Query:
+          order:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - getOrder
+      Tags:
+        ProjectName: !Ref ProjectName
+      XrayEnabled: true
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+
+  NoneDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt OrdersGraphqlApi.ApiId
+      Name: NoneDataSource
+      Type: NONE
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      GlobalSecondaryIndexes:
+        # Access pattern: query for orders
+        - IndexName: Orders
+          Projection: 
+            ProjectionType: ALL
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  Pattern1GraphQLAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: pattern1-allow-graphql
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:GraphQL
+            Resource:
+              - !Sub "${OrdersGraphqlApi.Arn}/*"
+
+Outputs:
+  GraphQLEndpoint:
+    Description: "GraphQL endpoint"
+    Value: !Sub "https://${OrdersGraphqlApi.GraphQLDns}/graphql"

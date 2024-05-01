@@ -1,0 +1,244 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Resources:
+  #
+  # GraphQL API
+  #
+  ChatGraphQLApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      SchemaUri: ./graphql/schema.graphql
+      Auth:
+        Type: AWS_IAM
+      LogConfig:
+        FieldLogLevel: ERROR
+      Functions:
+        sendMessage:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt StepFunctionsHttpDataSource.Name
+          CodeUri: ./graphql/resolvers/sendMessage.js
+        respondToMessage:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt NoneDataSource.Name
+          CodeUri: ./graphql/resolvers/respondToMessage.js
+        stashStateMachineName:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: "1.0.0"
+          DataSource: None
+          InlineCode: !Sub |
+            export function request(ctx) {
+              ctx.stash.stateMachineArn = "${ChatStateMachine.Arn}";
+              return {};
+            }
+            export function response(ctx) {
+              return ctx.result;
+            }
+      Resolvers:
+        Mutation:
+          sendMessage:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - stashStateMachineName
+              - sendMessage
+          respondToMessage:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - respondToMessage
+      Tags:
+        ProjectName: !Ref ProjectName
+      XrayEnabled: true
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+
+  StepFunctionsHttpDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt ChatGraphQLApi.ApiId
+      Name: StepFunctionsHttpDataSource
+      Description: Step Functions HTTP
+      Type: HTTP
+      ServiceRoleArn: !GetAtt AppSyncServiceRole.Arn
+      HttpConfig:
+        Endpoint: !Sub https://states.${AWS::Region}.amazonaws.com/
+        AuthorizationConfig:
+          AuthorizationType: AWS_IAM
+          AwsIamConfig:
+            SigningRegion: !Ref AWS::Region
+            SigningServiceName: states
+
+  NoneDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt ChatGraphQLApi.ApiId
+      Name: NoneDataSource
+      Type: NONE
+
+  ChatStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Name: ChatStateMachine
+      Tracing: 
+        Enabled: true
+      DefinitionUri: ./workflows/chat.asl.yaml
+      DefinitionSubstitutions:
+        BedrockModel: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/anthropic.claude-3-haiku-20240307-v1:0"
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: "default"
+        - Statement:
+            Effect: Allow
+            Action: bedrock:InvokeModel
+            Resource: "*"
+      
+  #
+  # EventBridge Rule targetting the GraphQL API for chat events
+  #
+  RespondToMessageRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Respond to chat
+      EventBusName: "default"
+      EventPattern:
+        source:
+          - prefix: 'chat.response'
+        detail-type:
+          - "Chat response"
+      Targets:
+        - Arn: !GetAtt ChatGraphQLApi.GraphQLEndpointArn
+          Id: RespondToMessage
+          RoleArn: !GetAtt ChatApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation RespondToMessage($input: MessageInput!) {
+                respondToMessage(input: $input) {
+                  createdAt
+                  id
+                  text
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              text: $.detail.text
+              createdAt: $.detail.createdAt
+              chatId: $.detail.chatId
+            InputTemplate: |-
+              {
+                "input": {
+                  "createdAt": "<createdAt>",
+                  "id": "<chatId>",
+                  "text": <text>
+                } 
+              }
+
+  #
+  # EventBridge execution role
+  #
+  ChatApiRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowAccessToGraphQLApi
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - appsync:GraphQL
+                Resource:
+                  - !Sub "${ChatGraphQLApi.Arn}/*"
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  AppSyncServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSAppSyncPushToCloudWatchLogs
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - sts:AssumeRole
+            Principal:
+              Service:
+                - appsync.amazonaws.com
+      Policies:
+        - PolicyName: start-state-machine
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource:
+                  - !Ref ChatStateMachine
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  ChatGraphQLAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: chat-allow-graphql
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:GraphQL
+            Resource:
+              - !Sub "${ChatGraphQLApi.Arn}/*"
+
+Outputs:
+  GraphQLEndpoint:
+    Description: "GraphQL endpoint"
+    Value: !Sub "https://${ChatGraphQLApi.GraphQLDns}/graphql"

@@ -1,0 +1,55 @@
+Comment: Chat with Bedrock agent
+StartAt: Wait
+States:
+  Wait:
+    Type: Wait
+    Seconds: 1
+    Next: Invoke GenAI model
+  Invoke GenAI model:
+    Type: Task
+    Resource: arn:aws:states:::bedrock:invokeModel
+    Parameters:
+      ModelId: ${BedrockModel}
+      Body:
+        max_tokens: 1024
+        system: >-
+          You are an expert party planner. You excel at planning pizza parties.
+          You will take an input from a customer of the size of their party
+          (number of people), any dietary restrictions, and parameters for their
+          party. Your response will include a suggested menu for their party
+          based on those inputs.
+
+          The menu available includes:
+            - Pizza. A small feeds 1-2 people; medium feeds 2-3 people; large 3-4; and extra large 5 or more.
+              We have many pizza toppings, including pepperoni, sausage, green peppers, onions, spinach,
+              tomatoes, garlic, and more. We absolutely do not offer pineapple as a pizza topping.
+            - Salad. We offer a garden salad, a chopped salad, and a Caesar salad in small and large sizes.
+              The small feeds 1 person; large up to 4.
+            - Appetizers. We have mozzerella sticks, garlic knots, breadsticks, and vegetable crudite.
+            - Dessert. For dessert, we have chocolate cake, tiramisu, and cannolis.
+
+          Your response should be sensitive to all dietary needs. We have a
+          gluten free pizza crust.
+
+          Limit your response to 300 characters.
+        messages:
+          - role: user
+            content.$: $.message
+        anthropic_version: bedrock-2023-05-31
+    ResultPath: $.result
+    Next: Publish response
+    ResultSelector:
+      text.$: $.Body.content[0].text
+  Publish response:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Detail:
+            chatId.$: $.chatId
+            text.$: $.result.text
+            createdAt.$: $.createdAt
+          DetailType: Chat response
+          EventBusName: default
+          Source: chat.response.claude
+    End: true

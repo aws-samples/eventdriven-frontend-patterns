@@ -1,0 +1,11 @@
+{
+  "dependencies": {
+    "@aws-lambda-powertools/logger": "^2.0.3",
+    "@aws-sdk/client-dynamodb": "^3.540.0",
+    "@aws-sdk/client-iot-data-plane": "^3.540.0",
+    "@aws-sdk/lib-dynamodb": "^3.540.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.136"
+  }
+}

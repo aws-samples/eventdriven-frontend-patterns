@@ -1,0 +1,336 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Resources:
+  #
+  # API Gateway Web Socket API - two way connection to client
+  #
+  WebSocketApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub "${ProjectName}-websocket-api"
+      Description: Web socket API for sample project
+      ProtocolType: WEBSOCKET
+      RouteSelectionExpression: "$request.body.action"
+  
+  #
+  # Lambda function - Called when a new client connects to the web socket API
+  #
+  OnConnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/onConnect.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          ConnectionsTable: !Ref WebSocketConnectionTable
+          POWERTOOLS_SERVICE_NAME: websocket
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/onConnect.js
+
+  OnConnectFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: OnConnectFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${OnConnectFunction}"
+    
+  # Wire together the function and API GW (permissions, integration, route)
+  OnConnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref OnConnectFunction
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  OnConnectFunctionIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      Description: OnConnect integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnConnectFunction.Arn}/invocations"
+  
+  OnConnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $connect
+      AuthorizationType: NONE
+      OperationName: OnConnectRoute
+      Target: !Sub "integrations/${OnConnectFunctionIntegration}"
+
+  #
+  # Lambda function - Called when a client disconnects to the web socket API
+  #
+  OnDisconnectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/onDisconnect.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          ConnectionsTable: !Ref WebSocketConnectionTable
+          POWERTOOLS_SERVICE_NAME: websocket
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/onDisconnect.js
+  
+  OnDisconnectFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: OnDisconnectFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${OnDisconnectFunction}"
+    
+  # Wire together the function and API GW (permissions, integration, route)
+  OnDisconnectFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      FunctionName: !Ref OnDisconnectFunction
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+
+  OnDisconnectFunctionIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref WebSocketApi
+      Description: On disconnect integration
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !Sub "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${OnDisconnectFunction.Arn}/invocations"
+  
+  OnDisconnectRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref WebSocketApi
+      RouteKey: $disconnect
+      AuthorizationType: NONE
+      OperationName: OnDisconnectRoute
+      Target: !Sub "integrations/${OnDisconnectFunctionIntegration}"
+
+
+  # API Gateway - deployment
+  ApiGWDeployment:
+    Type: AWS::ApiGatewayV2::Deployment
+    DependsOn: 
+      - OnConnectRoute
+      - OnDisconnectRoute
+    Properties:
+      ApiId: !Ref WebSocketApi
+
+  ApiGWStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref WebSocketApi
+      StageName: prod
+      Description: Production stage
+      DeploymentId: !Ref ApiGWDeployment
+
+  #
+  # DynamoDB table - Tracks clients connected to web socket
+  #
+  WebSocketConnectionTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: connectionId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: connectionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+  #
+  # Lambda function - event handler (new, update order)
+  #
+  HandleOrderEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: handleOrderEvents.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrdersTable: !Ref OrdersTable
+          POWERTOOLS_SERVICE_NAME: handleOrders
+      Events:
+        CreateUpdateOrderRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+            Pattern:
+              source:
+                - prefix: 'orders.events'
+              detail-type:
+                - "New order created"
+                - "Order updated"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/handleOrderEvents.js
+
+  HandleOrderEventsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleOrderEventsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleOrderEventsFunction}"
+
+  #
+  # Lambda function - stream handler
+  #
+  StreamHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleStream.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref WebSocketConnectionTable
+        - Statement:
+            Effect: Allow
+            Action:
+              - execute-api:ManageConnections
+            Resource: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebSocketApi}/*"
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          ConnectionsTable: !Ref WebSocketConnectionTable
+          WebsocketEndpoint: !Sub "https://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+          POWERTOOLS_SERVICE_NAME: handleStream
+      Events:
+        StreamEvent:
+          Type: DynamoDB
+          Properties:
+            Stream: !GetAtt OrdersTable.StreamArn
+            StartingPosition: TRIM_HORIZON
+            FilterCriteria:
+              Filters:
+                - Pattern: '{ "eventName": [ "INSERT", "MODIFY" ], "dynamodb": { "NewImage": { "type": { "S": [ "Order" ] } } } }'
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/handleStream.js
+
+  StreamHandlerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: StreamHandlerFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${StreamHandlerFunction}"
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      GlobalSecondaryIndexes:
+        # Access pattern: query for orders
+        - IndexName: Orders
+          Projection: 
+            ProjectionType: ALL
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+
+Outputs:
+  WebSocketEndpoint:
+    Description: "Websocket endpoint (wss)"
+    Value: !Sub "wss://${WebSocketApi}.execute-api.${AWS::Region}.amazonaws.com/prod"

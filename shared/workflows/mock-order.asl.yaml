@@ -1,0 +1,49 @@
+Comment: Mocks order being fulfilled and delivered.
+StartAt: Configure iterator
+States:
+  Configure iterator:
+    Type: Pass
+    ResultPath: $.iterator
+    Next: Set random wait
+    Parameters:
+      numStates.$: States.ArrayLength($.orderStates)
+      index: 0
+  Set random wait:
+    Type: Pass
+    Next: Wait
+    Parameters:
+      wait.$: States.MathRandom(1, ${MaxWaitBetweenStatusChange})
+    ResultPath: $.timer
+  Wait:
+    Type: Wait
+    Next: Put status event
+    SecondsPath: $.timer.wait
+  Put status event:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Detail:
+            orderId.$: $.orderId
+            status.$: States.ArrayGetItem($.orderStates, $.iterator.index)
+          DetailType: Order updated
+          EventBusName: ${EventBusName}
+          Source: ${EventBusName}.kitchen
+    Next: Increment index
+    ResultPath: null
+  Increment index:
+    Type: Pass
+    Parameters:
+      numStates.$: States.ArrayLength($.orderStates)
+      index.$: States.MathAdd($.iterator.index, 1)
+    ResultPath: $.iterator
+    Next: More?
+  More?:
+    Type: Choice
+    Choices:
+      - Variable: $.iterator.index
+        NumericLessThanPath: $.iterator.numStates
+        Next: Set random wait
+    Default: Success
+  Success:
+    Type: Succeed

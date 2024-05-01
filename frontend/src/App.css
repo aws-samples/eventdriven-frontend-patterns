@@ -1,0 +1,12 @@
+@keyframes highlightNew {
+  0% { background-color: #ffffff; }
+  50% { background-color: rgb(190 242 100); }
+  100% { background-color: #ffffff; }
+}
+
+.highlight {
+  animation-name: highlightNew;
+  animation-duration: 2s;
+  animation-fill-mode: backwards;
+  animation-iteration-count: initial;
+}

@@ -1,0 +1,349 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+  MaxSecondsToNextOrder:
+    Description: Maximum wait before next order is simulated
+    Type: Number
+    Default: 90
+    MaxValue: 360
+
+  MaxWaitBetweenStatusChange:
+    Description: Maximum wait before next status is simulated
+    Type: Number
+    Default: 60
+    MaxValue: 360
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+  Api:      
+    Cors:
+      AllowOrigin: "'http://localhost:5173'"
+      AllowHeaders: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+      AllowMethods: "'GET,POST,OPTIONS'"
+    TracingEnabled: true
+
+Resources:
+  #
+  # EventBridge - Custom event bus for order events
+  #
+  OrdersEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: orders.events
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  #
+  # Push all events to CloudWatch Logs Group
+  #
+  OrdersEventsToCloudWatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Push all order events to CloudWatch
+      EventBusName: !GetAtt OrdersEventBus.Name
+      EventPattern:
+        source:
+          - prefix: 'orders.events'
+      Name: all-orders-to-cw
+      State: ENABLED
+      Targets:
+        - Id: all-events-cw
+          Arn: !GetAtt OrdersEventsLogGroup.Arn
+
+  OrdersEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupClass: STANDARD
+      RetentionInDays: 7
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+  
+  OrdersEventsLogGroupPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: EventBridgeTargetPolicy
+      PolicyDocument: !Sub "{ \"Version\": \"2012-10-17\", \"Statement\": [ { \"Sid\": \"TrustEventsToStoreLogEvents\", \"Effect\": \"Allow\", \"Principal\": { \"Service\": [ \"events.amazonaws.com\",\"delivery.logs.amazonaws.com\",\"pipes.amazonaws.com\" ] }, \"Action\":[\"logs:PutLogEvents\",\"logs:CreateLogStream\"], \"Resource\": \"${OrdersEventsLogGroup.Arn}\" } ] }"
+
+  #
+  # Lambda function - order producer
+  #
+  OrderProducerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/publishOrderEvent.handler
+      Policies:
+        # Allow the function to pass the scheduler role
+        - Statement:
+            Effect: Allow
+            Action:
+              - "iam:GetRole"
+              - "iam:PassRole"
+            Resource: !GetAtt SchedulerRole.Arn
+        # Allow function to schedule the next publish
+        - Statement:
+            Effect: Allow
+            Action: "scheduler:CreateSchedule"
+            Resource: "*"
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref OrdersEventBus
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt MockOrderStateMachine.Name
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          EventBusName: !Ref OrdersEventBus
+          MaxSecondsToNextOrder: !Ref MaxSecondsToNextOrder
+          OrderWorkflowArn: !Ref MockOrderStateMachine
+          SchedulerRoleArn: !GetAtt SchedulerRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: GET
+            Path: /order
+            Auth:
+              Authorizer: AWS_IAM
+              # want to use API GW role to invoke instead of the caller
+              InvokeRole: !GetAtt ApiGatewayRole.Arn
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: true
+        Target: ES2020
+        EntryPoints:
+          - functions/publishOrderEvent.js
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action: sts:AssumeRole
+  
+  InvokeProducerFunctionPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref SchedulerRole
+      PolicyName: invoke-producer-function
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: !GetAtt OrderProducerFunction.Arn
+
+  #
+  # Step Functions - mock order workflow
+  #
+  MockOrderStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Name: mock-order-flow
+      DefinitionUri: workflows/mock-order.asl.yaml
+      DefinitionSubstitutions:
+        EventBusName: !Ref OrdersEventBus
+        MaxWaitBetweenStatusChange: !Ref MaxWaitBetweenStatusChange
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref OrdersEventBus
+
+  #
+  # Auth Resources
+  #
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: true
+
+  UnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+
+  IdentityPoolAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        unauthenticated: !GetAtt UnauthRole.Arn
+          
+  #
+  # Allow the frontend unauth role to access API GW resources
+  #
+  ApiGwAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref UnauthRole
+      PolicyName: shared-allow-apigw-access
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: execute-api:Invoke
+            Resource:
+              - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ServerlessRestApi}/*"
+
+  #
+  # API Gateway execution role
+  #
+  ApiGatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: apigateway.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: PutEvents
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: events:PutEvents
+                Resource: !GetAtt OrdersEventBus.Arn
+        - PolicyName: InvokeFunction
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource: !GetAtt OrderProducerFunction.Arn
+
+  #
+  # SSM Parameters - for convenience later
+  #
+  OrdersEventBusNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/orders/eventbus/name
+      Type: String
+      Value: !GetAtt OrdersEventBus.Name
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  OrdersEventBusArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/orders/eventbus/arn
+      Type: String
+      Value: !GetAtt OrdersEventBus.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  OrdersUnauthRoleNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/frontend/unauth/role
+      Type: String
+      Value: !Ref UnauthRole
+      Tags:
+        ProjectName: !Ref ProjectName
+  
+  OrdersIdentityPoolId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/frontend/identity/pool
+      Type: String
+      Value: !Ref IdentityPool
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  SharedRestApiId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/shared/api
+      Type: String
+      Value: !Ref ServerlessRestApi
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  SharedRestApiRoot:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/shared/api/root
+      Type: String
+      Value: !GetAtt ServerlessRestApi.RootResourceId
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  SharedRestApiRoldAran:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/shared/api/arn
+      Type: String
+      Value: !GetAtt ApiGatewayRole.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+  
+Outputs:
+  OrdersEventLogs:
+    Description: Cloudwatch Logs Group that shows the raw incoming events
+    Value: !Ref OrdersEventsLogGroup
+
+  OrdersEventBusArn:
+    Description: EventBridge Event Bus ARN to which events are published
+    Value: !GetAtt OrdersEventBus.Arn
+  
+  OrdersEventBusName:
+    Description: EventBridge Event Bus to which events are published
+    Value: !GetAtt OrdersEventBus.Name
+
+  IdentityPoolId:
+    Description: Cognito identity pool id
+    Value: !Ref IdentityPool
+  
+  ApiEndpoint:
+    Description: Endpoint for the enrichment service
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

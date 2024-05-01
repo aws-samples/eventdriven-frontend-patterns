@@ -1,0 +1,5 @@
+node_modules
+.DS_Store
+samconfig.toml
+.aws-sam
+frontend/src/appconfig.js

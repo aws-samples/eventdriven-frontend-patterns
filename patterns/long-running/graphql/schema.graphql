@@ -1,0 +1,31 @@
+type Message {
+	id: ID!
+	text: String
+	createdAt: String
+}
+
+input MessageInput {
+	id: ID!
+	text: String!
+	createdAt: String!
+}
+
+type Mutation {
+	sendMessage(text: String!): Message
+	respondToMessage(input: MessageInput): Message
+}
+
+type Query {
+	doNothing: Boolean
+}
+
+type Subscription {
+	onResponse(id: ID!): Message
+		@aws_subscribe(mutations: [ "respondToMessage" ])
+}
+
+schema {
+	query: Query
+	mutation: Mutation
+	subscription: Subscription
+}

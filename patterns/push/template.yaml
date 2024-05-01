@@ -1,0 +1,316 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+  WebPushPublicToken:
+    Description: Public token for web push
+    Type: String
+
+  WebPushPrivateToken:
+    Description: Private token for web push
+    Type: String
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Metadata:
+  # @see https://www.andmore.dev/blog/sam-yaml-anchors
+  esbuild-properties: &esbuild-properties
+    Minify: false
+    Sourcemap: false
+    Target: ES2020
+    # Banner:
+    #   - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+  cors-options-properties: &cors-options-properties
+    RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+    AuthorizationType: NONE
+    HttpMethod: OPTIONS
+    MethodResponses:
+      - StatusCode: 200
+        ResponseParameters:
+          method.response.header.Access-Control-Allow-Origin: integration.response.header.Access-Control-Allow-Origin
+          method.response.header.Access-Control-Allow-Headers: integration.response.header.Access-Control-Allow-Headers
+          method.response.header.Access-Control-Allow-Methods: integration.response.header.Access-Control-Allow-Methods
+    Integration:
+      Type: MOCK
+      PassthroughBehavior: WHEN_NO_MATCH
+      RequestTemplates:
+        application/json: '{ "statusCode": 200 }'
+      IntegrationResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: "'http://localhost:5173'"
+            method.response.header.Access-Control-Allow-Headers: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+            method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+          ResponseTemplates:
+            application/json: "{}"
+
+Resources:
+  HandleOrderEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleOrderEvents.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SubscriptionsTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          SubscriptionsTable: !Ref SubscriptionsTable
+          WEBPUSH_PUBLIC_TOKEN: !Ref WebPushPublicToken
+          WEBPUSH_PRIVATE_TOKEN: !Ref WebPushPrivateToken
+          POWERTOOLS_SERVICE_NAME: handleOrders
+      Events:
+        CreateUpdateOrderRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+            Pattern:
+              source:
+                - prefix: 'orders.events'
+              detail-type:
+                - "Order updated"
+              detail:
+                status:
+                  - OUT_FOR_DELIVERY
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - functions/handleOrderEvents.js
+
+  HandleOrderEventsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleOrderEventsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleOrderEventsFunction}"
+
+  HandleSubscribeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleSubscribe.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SubscriptionsTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          SubscriptionsTable: !Ref SubscriptionsTable
+          WEBPUSH_PUBLIC_TOKEN: !Ref WebPushPublicToken
+          WEBPUSH_PRIVATE_TOKEN: !Ref WebPushPrivateToken
+          POWERTOOLS_SERVICE_NAME: handleSubscription
+      Events:
+        CreateUpdateOrderRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+            Pattern:
+              source:
+                - prefix: "subscription"
+              detail-type:
+                - "New subscription"
+                - "Subscribe to order"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - functions/handleSubscribe.js
+
+  HandleSubscribeFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleSubscribeFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleSubscribeFunction}"
+
+  #
+  # API Gateway - method to proxy EventBridge
+  #
+  SubscribeResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: "{{resolve:ssm:/patterns/eventdriven/shared/api/root}}"
+      PathPart: "subscribe"
+      RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+
+  SubscribeToOrderResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      ParentId: !Ref SubscribeResource
+      PathPart: "order"
+      RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+
+  # POST /subscribe
+  SubscribePostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: POST
+      ResourceId: !Ref SubscribeResource
+      RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: integration.response.header.Access-Control-Allow-Origin
+            method.response.header.Access-Control-Allow-Headers: integration.response.header.Access-Control-Allow-Headers
+            method.response.header.Access-Control-Allow-Methods: integration.response.header.Access-Control-Allow-Methods
+      RequestParameters:
+        method.request.header.X-Amz-Target: false
+        method.request.header.Content-Type: false
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Credentials: "{{resolve:ssm:/patterns/eventdriven/shared/api/arn}}"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:events:action/PutEvents"
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json: !Sub
+            - |-
+              #set($context.requestOverride.header.X-Amz-Target = "AWSEvents.PutEvents")
+              #set($context.requestOverride.header.Content-Type = "application/x-amz-json-1.1")
+              #set($body = $util.parseJson($input.body))
+              {
+                "Entries": [
+                  {
+                    "Source": "subscription",
+                    "EventBusName": "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/arn}}",
+                    "DetailType": "New subscription",
+                    "Detail": "{\"endpoint\":\"$body.endpoint\",\"keys\":{\"p256dh\":\"$body.keys.p256dh\",\"auth\":\"$body.keys.auth\"}}"
+                  }
+                ]
+              }
+            - { EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/arn}}" }
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'http://localhost:5173'"
+              method.response.header.Access-Control-Allow-Headers: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+            ResponseTemplates:
+              application/json: !Sub 
+                - |-
+                  { "success": true }
+                - {}
+
+  # POST /subscribe/order
+  SubscribeToOrderPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      AuthorizationType: AWS_IAM
+      HttpMethod: POST
+      ResourceId: !Ref SubscribeToOrderResource
+      RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Origin: integration.response.header.Access-Control-Allow-Origin
+            method.response.header.Access-Control-Allow-Headers: integration.response.header.Access-Control-Allow-Headers
+            method.response.header.Access-Control-Allow-Methods: integration.response.header.Access-Control-Allow-Methods
+      RequestParameters:
+        method.request.header.X-Amz-Target: false
+        method.request.header.Content-Type: false
+      Integration:
+        Type: AWS
+        IntegrationHttpMethod: POST
+        Credentials: "{{resolve:ssm:/patterns/eventdriven/shared/api/arn}}"
+        Uri: !Sub "arn:aws:apigateway:${AWS::Region}:events:action/PutEvents"
+        PassthroughBehavior: WHEN_NO_TEMPLATES
+        RequestTemplates:
+          application/json: !Sub
+            - |-
+              #set($context.requestOverride.header.X-Amz-Target = "AWSEvents.PutEvents")
+              #set($context.requestOverride.header.Content-Type = "application/x-amz-json-1.1")
+              #set($body = $util.parseJson($input.body))
+              {
+                "Entries": [
+                  {
+                    "Source": "subscription",
+                    "EventBusName": "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/arn}}",
+                    "DetailType": "Subscribe to order",
+                    "Detail": "{\"subscriptionId\":\"$body.subscriptionId\",\"orderId\":\"$body.orderId\"}"
+                  }
+                ]
+              }
+            - { EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/arn}}" }
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Origin: "'http://localhost:5173'"
+              method.response.header.Access-Control-Allow-Headers: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+              method.response.header.Access-Control-Allow-Methods: "'GET,POST,OPTIONS'"
+            ResponseTemplates:
+              application/json: !Sub 
+                - |-
+                  { "success": true }
+                - {}
+  
+  SubscribeResourceCorsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ResourceId: !Ref SubscribeResource
+      <<: *cors-options-properties
+
+  SubscribeToOrdersResourceCorsMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      ResourceId: !Ref SubscribeToOrderResource
+      <<: *cors-options-properties
+
+  # Manual deployment
+  ApiGatewayDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn: 
+      - SubscribePostMethod
+      - SubscribeToOrderPostMethod
+      - SubscribeResourceCorsMethod
+      - SubscribeToOrdersResourceCorsMethod
+    Properties:
+      RestApiId: "{{resolve:ssm:/patterns/eventdriven/shared/api}}"
+      StageName: "Prod"
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  SubscriptionsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST

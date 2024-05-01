@@ -1,0 +1,61 @@
+{
+  "Records": [
+      {
+          "eventID": "1fe7d7845184d4b2e28629e5c8f06210",
+          "eventName": "MODIFY",
+          "eventVersion": "1.1",
+          "eventSource": "aws:dynamodb",
+          "awsRegion": "us-east-2",
+          "dynamodb": {
+              "ApproximateCreationDateTime": 1710861408,
+              "Keys": {
+                  "sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  }
+              },
+              "NewImage": {
+                  "createdAt": {
+                      "S": "2024-03-19T14:56:50.190Z"
+                  },
+                  "total": {
+                      "N": "34.97"
+                  },
+                  "gsi1sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "orderId": {
+                      "S": "2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "gsi1pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "customerId": {
+                      "S": "1234567890"
+                  },
+                  "sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "currency": {
+                      "S": "USD"
+                  },
+                  "pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM3"
+                  },
+                  "numItems": {
+                      "N": "3"
+                  },
+                  "status": {
+                      "S": "IN_KITCHEN"
+                  }
+              },
+              "SequenceNumber": "3159300000000040418447949",
+              "SizeBytes": 350,
+              "StreamViewType": "NEW_IMAGE"
+          },
+          "eventSourceARN": "arn:aws:dynamodb:us-east-2:445326600753:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+      }
+  ]
+}

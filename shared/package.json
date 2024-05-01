@@ -1,0 +1,15 @@
+{
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.136",
+    "esbuild": "^0.20.2"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-lambda-powertools/logger": "^2.0.2",
+    "@aws-sdk/client-eventbridge": "^3.534.0",
+    "@aws-sdk/client-scheduler": "^3.533.0",
+    "@aws-sdk/client-sfn": "^3.533.0",
+    "date-fns": "^3.4.0",
+    "ksuid": "^3.0.0"
+  }
+}

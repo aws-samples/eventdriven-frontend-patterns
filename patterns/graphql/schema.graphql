@@ -1,0 +1,80 @@
+# Partial schema. We're not concerned with modelling customer, address, etc.
+# for the purposes of this sample.
+
+type Order {
+  orderId: ID!
+  currency: String!
+  customerId: String!
+  items: [OrderItem]!
+  numItems: Int!
+  status: OrderStatus!
+  total: Float!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime
+}
+
+type OrderItem {
+  itemId: String!
+  description: String!
+  quantity: Int!
+  unitPrice: Float!
+}
+
+type OrdersConnection {
+  items: [Order]!
+  nextToken: String
+}
+
+input CreateOrderInput {
+  orderId: ID!
+  currency: String
+  customerId: String!
+  items: [ItemInput]!
+}
+
+input UpdateOrderInput {
+  orderId: ID!
+  status: OrderStatus!
+}
+
+input ItemInput {
+  itemId: String!
+  quantity: Int!
+  unitPrice: Float!
+  description: String!
+}
+
+enum OrderStatus {
+  SUBMITTED
+  ACCEPTED_BY_STORE
+  IN_KITCHEN
+  READY_FOR_PICKUP
+  PICKED_UP_BY_DRIVER
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  COMPLETED
+}
+
+type Query {
+  orders(limit: Int, nextToken: String): OrdersConnection
+
+  order(orderId: ID!): Order
+}
+
+type Mutation {
+  createOrder(input: CreateOrderInput!): Order
+
+  updateOrder(input: UpdateOrderInput!): Order
+}
+
+type Subscription {
+  onCreateOrUpdateOrder(orderId: ID): Order
+    @aws_subscribe(mutations: [ "createOrder", "updateOrder" ])
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}

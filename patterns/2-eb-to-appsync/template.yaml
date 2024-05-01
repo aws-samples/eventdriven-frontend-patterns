@@ -1,0 +1,314 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Resources:
+  #
+  # EventBridge Rule targetting the GraphQL API for customer-events
+  #
+  CreateOrderRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Handle new order events
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: 'orders.events'
+        detail-type:
+          - "New order created"
+      Targets:
+        - Arn: !GetAtt OrdersGraphqlApi.GraphQLEndpointArn
+          Id: OrdersApiCreateOrder
+          RoleArn: !GetAtt OrderApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation CreateOrder($input: CreateOrderInput!) {
+                createOrder(input: $input) {
+                  currency
+                  customerId
+                  createdAt
+                  updatedAt
+                  items {
+                    itemId
+                    description
+                    quantity
+                    unitPrice
+                  }
+                  orderId
+                  numItems
+                  status
+                  total
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              currency: $.detail.currency
+              customerId: $.detail.customerId
+              items: $.detail.items
+              orderId: $.detail.orderId
+            InputTemplate: |-
+              {
+                "input": {
+                  "currency": "<currency>",
+                  "customerId": "<customerId>",
+                  "items": <items>,
+                  "orderId": "<orderId>"
+                } 
+              }
+  
+  UpdateOrderRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Handle order updates
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: 'orders.events'
+        detail-type:
+          - "Order updated"
+      Targets:
+        - Arn: !GetAtt OrdersGraphqlApi.GraphQLEndpointArn
+          Id: OrdersApiUpdateOrder
+          RoleArn: !GetAtt OrderApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation UpdateOrder($input: UpdateOrderInput!) {
+                updateOrder(input: $input) {
+                  orderId
+                  currency
+                  customerId
+                  createdAt
+                  updatedAt
+                  items {
+                    itemId
+                    description
+                    quantity
+                    unitPrice
+                  }
+                  numItems
+                  status
+                  total
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              orderId: $.detail.orderId
+              status: $.detail.status
+            InputTemplate: |-
+              {
+                "input": {
+                  "orderId": "<orderId>",
+                  "status": "<status>"
+                } 
+              }
+              
+  #
+  # GraphQL API
+  #
+  OrdersGraphqlApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      Name: Pattern2-OrdersGraphqlApi
+      SchemaUri: ../graphql/schema.graphql
+      Auth:
+        Type: AWS_IAM
+      LogConfig:
+        FieldLogLevel: ERROR
+      DataSources:
+        DynamoDb:
+          OrdersTableDataSource:
+            Permissions:
+              - Read
+              - Write
+            TableArn: !GetAtt OrdersTable.Arn
+            TableName: !Ref OrdersTable
+      Functions:
+        createOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/createOrder.js
+        getOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/getOrder.js
+        orderItems:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/Order.items.js
+        stashTableName:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: "1.0.0"
+          DataSource: None
+          InlineCode: !Sub |
+            export function request(ctx) {
+              ctx.stash.tableName = "${OrdersTable}";
+              return {};
+            }
+            export function response(ctx) {
+              return ctx.result;
+            }
+        updateOrder:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: OrdersTableDataSource
+          CodeUri: ../graphql/resolvers/updateOrder.js
+      Resolvers:
+        Order:
+          items:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - orderItems
+        Mutation:
+          createOrder:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - stashTableName
+              - createOrder
+          updateOrder:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - updateOrder
+        Query:
+          order:
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - getOrder
+      Tags:
+        ProjectName: !Ref ProjectName
+      XrayEnabled: true
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      GlobalSecondaryIndexes:
+        # Access pattern: query for orders
+        - IndexName: Orders
+          Projection: 
+            ProjectionType: ALL
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+
+  #
+  # EventBridge execution role
+  #
+  OrderApiRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowAccessToGraphQLApi
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - appsync:GraphQL
+                Resource:
+                  - !Sub "${OrdersGraphqlApi.Arn}/*"
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  Pattern2GraphQLAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: pattern2-allow-graphql
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:GraphQL
+            Resource:
+              - !Sub "${OrdersGraphqlApi.Arn}/*"
+
+Outputs:
+  GraphQLEndpoint:
+    Description: "GraphQL endpoint"
+    Value: !Sub "https://${OrdersGraphqlApi.GraphQLDns}/graphql"

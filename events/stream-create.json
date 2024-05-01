@@ -1,0 +1,163 @@
+{
+  "Records": [
+      {
+          "eventID": "e7824161794958718690b5c5226a0e8b",
+          "eventName": "INSERT",
+          "eventVersion": "1.1",
+          "eventSource": "aws:dynamodb",
+          "awsRegion": "us-east-2",
+          "dynamodb": {
+              "ApproximateCreationDateTime": 1710878608,
+              "Keys": {
+                  "sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  }
+              },
+              "NewImage": {
+                  "createdAt": {
+                      "S": "2024-03-19T20:03:28.366Z"
+                  },
+                  "total": {
+                      "N": "34.97"
+                  },
+                  "gsi1sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "orderId": {
+                      "S": "2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "gsi1pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "customerId": {
+                      "S": "1234567890"
+                  },
+                  "sk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "currency": {
+                      "S": "USD"
+                  },
+                  "pk": {
+                      "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                  },
+                  "numItems": {
+                      "N": "3"
+                  },
+                  "status": {
+                      "S": "SUBMITTED"
+                  }
+              },
+              "SequenceNumber": "4045600000000012965908971",
+              "SizeBytes": 349,
+              "StreamViewType": "NEW_IMAGE"
+          },
+          "eventSourceARN": "arn:aws:dynamodb:us-east-2:445326600753:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+      },
+      {
+        "eventID": "1f3805e768cb27769cceac01c7139aa3",
+        "eventName": "INSERT",
+        "eventVersion": "1.1",
+        "eventSource": "aws:dynamodb",
+        "awsRegion": "us-east-2",
+        "dynamodb": {
+            "ApproximateCreationDateTime": 1710878608,
+            "Keys": {
+                "sk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#pizza2"
+                },
+                "pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#pizza2"
+                }
+            },
+            "NewImage": {
+                "unitPrice": {
+                    "N": "14.99"
+                },
+                "itemId": {
+                    "S": "pizza2"
+                },
+                "quantity": {
+                    "N": "2"
+                },
+                "gsi1sk": {
+                    "S": "ITEM#pizza2"
+                },
+                "orderId": {
+                    "S": "2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                },
+                "gsi1pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                },
+                "sk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#pizza2"
+                },
+                "description": {
+                    "S": "Cheese pizza (medium)"
+                },
+                "pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#pizza2"
+                }
+            },
+            "SequenceNumber": "4098600000000019370306023",
+            "SizeBytes": 344,
+            "StreamViewType": "NEW_IMAGE"
+        },
+        "eventSourceARN": "arn:aws:dynamodb:us-east-2:445326600753:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+    },
+    {
+        "eventID": "07d2e8bdd6710d10efc87f46c65dca69",
+        "eventName": "INSERT",
+        "eventVersion": "1.1",
+        "eventSource": "aws:dynamodb",
+        "awsRegion": "us-east-2",
+        "dynamodb": {
+            "ApproximateCreationDateTime": 1710878608,
+            "Keys": {
+                "sk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#app1"
+                },
+                "pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#app1"
+                }
+            },
+            "NewImage": {
+                "unitPrice": {
+                    "N": "4.99"
+                },
+                "itemId": {
+                    "S": "app1"
+                },
+                "quantity": {
+                    "N": "1"
+                },
+                "gsi1sk": {
+                    "S": "ITEM#app1"
+                },
+                "orderId": {
+                    "S": "2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                },
+                "gsi1pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4"
+                },
+                "sk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#app1"
+                },
+                "description": {
+                    "S": "Breadsticks (medium)"
+                },
+                "pk": {
+                    "S": "ORDER#2dh3kOyQLCo9s2mG8yMu5KcZSM4#ITEM#app1"
+                }
+            },
+            "SequenceNumber": "4098700000000019370306053",
+            "SizeBytes": 331,
+            "StreamViewType": "NEW_IMAGE"
+        },
+        "eventSourceARN": "arn:aws:dynamodb:us-east-2:445326600753:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+    }
+  ]
+}

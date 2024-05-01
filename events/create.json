@@ -1,0 +1,8 @@
+[
+  {
+    "DetailType": "New order created",
+    "Source": "orders.events.payment",
+    "EventBusName": "orders.events",
+    "Detail": "{\"orderId\": \"2dh3kOyQLCo9s2mG8yMu5KcZSM5\", \"customerId\": \"1234567890\",\"currency\": \"USD\",\"items\": [  {\"itemId\": \"app1\",\"quantity\": 1,\"unitPrice\": 4.99,\"description\": \"Breadsticks (medium)\"  },{\"itemId\": \"pizza2\",\"quantity\": 2,\"unitPrice\": 14.99,\"description\": \"Cheese pizza (medium)\"  }]}"
+  }
+]

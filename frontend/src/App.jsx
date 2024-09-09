@@ -19,6 +19,10 @@ Amplify.configure({
       shared: {
         endpoint: config.sharedEndpoint,
         region: config.region
+      },
+      polling: {
+        endpoint: config.polling.endpoint,
+        region: config.region
       }
     }
   }
@@ -26,10 +30,11 @@ Amplify.configure({
 
 // demo components
 import PlaceNewOrder from './components/PlaceNewOrder';
-import Pattern1 from './components/Pattern1';
+// import Pattern1 from './components/Pattern1';
 import Pattern2 from './components/Pattern2';
 import Pattern3 from './components/Pattern3';
 // import Pattern4 from './components/Pattern4';
+import Polling from "./components/Polling";
 import { MqttClientProvider } from './mqtt/MqttClientProvider';
 import Pattern4a from './components/Pattern4a';
 import Chat from "./components/Chat";
@@ -41,7 +46,8 @@ function App() {
         <div className="col-span-2">
           <PlaceNewOrder />
         </div>
-        <Pattern1 />
+        <Polling />
+        {/* <Pattern1 /> */}
         <Pattern2 />
         <Pattern3 />
         {/* <Pattern4 /> */}
@@ -50,7 +56,7 @@ function App() {
           <Pattern4a />
         </MqttClientProvider>
 
-        <div className="col-span-2">
+        <div className="col-span-2 mb-20">
           <Chat />
         </div>
       </div>

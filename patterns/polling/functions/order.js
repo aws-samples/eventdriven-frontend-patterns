@@ -71,6 +71,24 @@ class Order {
     });
   }
 
+  static fromItem(item) {
+    let order = new Order({
+      orderId: item.orderId,
+      createdAt: item.createdAt,
+      customerId: item.customerId,
+      currency: item.currency,
+      status: item.status,
+      customerId: item.customerId,
+    });
+
+    order.numItems = item.numItems;
+    order.total = item.total;
+    order.createdAt = item.createdAt;
+    order.updatedAt = item.updatedAt;
+
+    return order;
+  }
+
   key() {
     return {
       pk: `ORDER#${this.orderId}`,
@@ -99,6 +117,20 @@ class Order {
       total: this.total,
       type: "Order",
       expiresAt: Math.floor((new Date().getTime() + 24 * 60 * 60 * 1000) / 1000), // 1 day
+    }
+  }
+
+  toJson() {
+    return {
+      orderId: this.orderId,
+      createdAt: this.createdAt,
+      updatedAt: this.updatedAt,
+      currency: this.currency,
+      customerId: this.customerId,
+      status: this.status,
+      numItems: this.numItems,
+      total: this.total,
+      // items: this.items?.map((item) => item.toItem())
     }
   }
 }

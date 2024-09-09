@@ -1,0 +1,231 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  EDA Day London 2024
+  Patterns for building event-driven web and mobile app backends
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+  Api:
+    Auth:
+      AddDefaultAuthorizerToCorsPreflight: false
+      DefaultAuthorizer: AWS_IAM
+    Cors:
+      AllowOrigin: "'http://localhost:5173'"
+      AllowHeaders: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+      AllowMethods: "'GET,OPTIONS'"
+    TracingEnabled: true
+
+Metadata:
+  # @see https://www.andmore.dev/blog/sam-yaml-anchors
+  esbuild-properties: &esbuild-properties
+    Minify: false
+    Sourcemap: false
+    Target: ES2020
+    # Banner:
+    #   - js=import { createRequire } from 'module'; const require = createRequire(import.meta.url);
+
+Resources:
+  #
+  # Lambda function - handle order event
+  #
+  HandleOrderEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/handleOrderEvents.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrdersTable: !Ref OrdersTable
+          POWERTOOLS_SERVICE_NAME: handleOrders
+      Events:
+        CreateUpdateOrderRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: "{{resolve:ssm:/patterns/eventdriven/orders/eventbus/name}}"
+            Pattern:
+              source:
+                - prefix: 'orders.events'
+              detail-type:
+                - "New order created"
+                - "Order updated"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - functions/handleOrderEvents.js
+  
+  HandleOrderEventsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleOrderEventsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleOrderEventsFunction}"
+
+  #
+  # Lambda function - get order
+  #
+  GetOrderFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/getOrder.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref OrdersTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrdersTable: !Ref OrdersTable
+          POWERTOOLS_SERVICE_NAME: orders
+      Events:
+        GetEvent:
+          Type: Api
+          Properties:
+            Path: /orders/{orderId}
+            Method: GET
+            Auth:  # Need to set independent, global not working
+              InvokeRole: NONE
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - functions/getOrder.js
+  
+  GetOrderFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: GetOrderFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${GetOrderFunction}"
+
+  #
+  # Lambda function - get orders
+  #
+  GetOrdersFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: functions/getOrders.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref OrdersTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          OrdersTable: !Ref OrdersTable
+          POWERTOOLS_SERVICE_NAME: orders
+      Events:
+        GetEvent:
+          Type: Api
+          Properties:
+            Path: /orders
+            Method: GET
+            Auth:  # Need to set independent, global not working
+              InvokeRole: NONE
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        <<: *esbuild-properties
+        EntryPoints:
+          - functions/getOrders.js
+  
+  GetOrdersFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: GetOrdersFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${GetOrdersFunction}"
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: gsi1pk
+          AttributeType: S
+        - AttributeName: gsi1sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      BillingMode: PAY_PER_REQUEST
+      StreamSpecification:
+        StreamViewType: NEW_IMAGE
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      GlobalSecondaryIndexes:
+        # Access pattern: query for orders
+        - IndexName: Orders
+          Projection: 
+            ProjectionType: ALL
+          KeySchema:
+            - AttributeName: gsi1pk
+              KeyType: HASH
+            - AttributeName: gsi1sk
+              KeyType: RANGE
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  PollingPatternApiAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: polling-pattern-allow-api
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: execute-api:Invoke
+            Resource:
+              - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ServerlessRestApi}/*"
+
+Outputs:
+  ApiEndpoint:
+    Description: Endpoint for the order services
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

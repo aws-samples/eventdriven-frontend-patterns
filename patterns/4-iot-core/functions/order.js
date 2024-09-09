@@ -98,7 +98,7 @@ class Order {
       numItems: this.numItems,
       total: this.total,
       type: "Order",
-      expiresAt: new Date().getTime() + (60 * 60 * 24)
+      expiresAt: Math.floor((new Date().getTime() + 24 * 60 * 60 * 1000) / 1000), // 1 day
     }
   }
 }
@@ -144,7 +144,7 @@ class OrderItem {
       unitPrice: this.unitPrice,
       quantity: this.quantity,
       type: "OrderItem",
-      expiresAt: new Date().getTime() + (60 * 60 * 24)
+      expiresAt: Math.floor((new Date().getTime() + 24 * 60 * 60 * 1000) / 1000), // 1 day
     }
   }
 }

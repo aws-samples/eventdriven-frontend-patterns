@@ -162,6 +162,8 @@ After deploying the patterns, you can configure and start the frontend demo appl
 - [Pattern #3: Amazon API Gateway WebSockets](./patterns/3-apigw-websocket/README.md)
 - [Pattern #4: AWS IoT Core](./patterns/4-iot-core/README.md)
 - [Web Push](./patterns/push/README.md)
+- [Long Running](./patterns/long-running/README.md)
+- [Polling](./patterns/polling/README.md)
 
 ## Starting the frontend
 
@@ -191,6 +193,9 @@ const config = {
   },
   pattern3: {
     endpoint: "" // `WebSocketEndpoint` from pattern 3 stack output, you must include `wss://` at start and `/prod` at end
+  },
+  polling: {
+    endpoint: "" // `ApiEndpoint` from polling stack output
   },
   push: {
     applicationServerKey: "" // your public key for web push, see push pattern README for details

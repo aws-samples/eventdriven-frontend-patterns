@@ -78,6 +78,16 @@ Resources:
         ProjectName: !Ref ProjectName
         IoTCoreEndpoint: !Ref IoTCoreEndpoint
 
+  Polling:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Location: ./patterns/polling/template.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
   PushPattern:
     Type: AWS::Serverless::Application
     DependsOn: Shared
@@ -128,6 +138,10 @@ Outputs:
   Pattern4IoTEndpoint:
     Description: App config - mqttEndpoint
     Value: !Ref IoTCoreEndpoint
+
+  PollingEndPoint:
+    Description: App config - polling.endpoint
+    Value: !GetAtt Polling.Outputs.ApiEndpoint
   
   PushApplicationServerKey:
     Description: App config - push.applicationServerKey

@@ -1,0 +1,195 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  re:Invent 2024
+  API305 - Asynchronous frontends: Building seamless event-driven experiences
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+
+Resources:
+  #
+  # Lambda function - stream handler
+  #
+  StreamHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ./src/functions/stream/1-appsync.handler
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - appsync:GraphQL
+            Resource: !Sub "${FlightStatusGraphqlApi.Arn}/*"
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          FlightStatusApiEndpoint: !GetAtt FlightStatusGraphqlApi.GraphQLUrl
+          POWERTOOLS_SERVICE_NAME: handleStream-pattern1
+      Events:
+        StreamEvent:
+          Type: Kinesis
+          Properties:
+            BatchSize: 1
+            Stream: "{{resolve:ssm:/patterns/eventdriven/flights/stream/arn}}"
+            StartingPosition: TRIM_HORIZON
+            # MaximumBatchingWindowInSeconds: 10
+            FilterCriteria:
+              Filters:
+                - Pattern: '{ "data": { "eventName": [ "INSERT", "MODIFY" ], "dynamodb": { "NewImage": { "type": { "S": [ "FlightStatus" ] } } } } }'
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: false
+        Target: ES2020
+        EntryPoints:
+          - ./src/functions/stream/1-appsync.js
+
+  StreamHandlerFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: StreamHandlerFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${StreamHandlerFunction}"
+
+  #
+  # GraphQL API
+  #
+  FlightStatusGraphqlApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      Name: Pattern1-FlightStatusGraphqlApi
+      SchemaUri: ../src/graphql/schema.graphql
+      Auth:
+        Type: AWS_IAM
+      LogConfig:
+        FieldLogLevel: ERROR
+      DataSources:
+        DynamoDb:
+          FlightStatusTableDataSource:
+            Permissions:
+              - Read
+              - Write
+            TableArn: "{{resolve:ssm:/patterns/eventdriven/flights/table/arn}}"
+            TableName: "{{resolve:ssm:/patterns/eventdriven/flights/table/name}}"
+      Functions:
+        createFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt NoneDataSource.Name
+          CodeUri: ../src/graphql/resolvers/none.createFlightStatus.js
+        getFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/getFlightStatus.js
+        listFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/listFlightStatus.js
+        updateFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: !GetAtt NoneDataSource.Name
+          CodeUri: ../src/graphql/resolvers/none.updateFlightStatus.js
+      Resolvers:
+        Mutation:
+          createFlightStatus:
+            FieldName: createFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - createFlightStatus
+              - getFlightStatus
+          updateFlightStatus:
+            FieldName: updateFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - updateFlightStatus
+              - getFlightStatus
+        Query:
+          listFlightStatus:
+            FieldName: listFlights
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - listFlightStatus
+          getFlightStatus:
+            FieldName: getFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - getFlightStatus
+      Tags:
+        ProjectName: !Ref ProjectName
+      XrayEnabled: true
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+
+  NoneDataSource:
+    Type: AWS::AppSync::DataSource
+    Properties:
+      ApiId: !GetAtt FlightStatusGraphqlApi.ApiId
+      Name: NoneDataSource
+      Type: NONE
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  Pattern1GraphQLAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: pattern1-allow-graphql
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:GraphQL
+            Resource:
+              - !Sub "${FlightStatusGraphqlApi.Arn}/*"
+
+Outputs:
+  GraphQLEndpoint:
+    Description: "GraphQL endpoint"
+    Value: !Sub "https://${FlightStatusGraphqlApi.GraphQLDns}/graphql"

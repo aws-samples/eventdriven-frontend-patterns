@@ -1,0 +1,379 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  re:Invent 2024
+  API305 - Asynchronous frontends: Building seamless event-driven experiences
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+  
+  AuthDomain:
+    Description: Name for the domain that hosts sign-up and sign-in (must be unique)
+    Type: String
+
+Resources:
+  #
+  # AppSync Events API
+  #
+  EventsApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: !Sub "${ProjectName}-flightStatus"
+      EventConfig:
+        AuthProviders:
+          - AuthType: API_KEY
+          - AuthType: OPENID_CONNECT
+            OpenIDConnectConfig:
+              # ClientId: !GetAtt ServiceUserPoolClient.ClientId
+              Issuer: !Sub "https://cognito-idp.${AWS::Region}.amazonaws.com/${ServiceUserPool.UserPoolId}"
+        ConnectionAuthModes:
+          - AuthType: OPENID_CONNECT
+          - AuthType: API_KEY
+        DefaultPublishAuthModes:
+          - AuthType: OPENID_CONNECT
+        DefaultSubscribeAuthModes:
+          - AuthType: API_KEY
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+  
+  FlightsNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: flights
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  SeatAssignmentNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Name: seats
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+  
+  FlightStatusApiKey:
+    Type: AWS::AppSync::ApiKey
+    Properties:
+      ApiId: !GetAtt EventsApi.ApiId
+      Description: !Sub "API Key for ${ProjectName}"
+
+  #
+  # EventBridge Pipe
+  #
+  PublishEventPipe:
+    Type: AWS::Pipes::Pipe
+    Properties:
+      Description: >-
+        EventBridge Pipe that publishes incoming flight status
+        events via the AppSync Events API
+      LogConfiguration:
+        CloudwatchLogsLogDestination:
+          LogGroupArn: !GetAtt PublishEventPipeLogGroup.Arn
+        Level: TRACE
+      Source: "{{resolve:ssm:/patterns/eventdriven/flights/stream/arn}}"
+      SourceParameters:
+        FilterCriteria:
+          Filters:
+            - Pattern: '{ "data": { "eventName": [ "INSERT", "MODIFY" ], "dynamodb": { "NewImage": { "type": { "S": [ "FlightStatus" ] } } } } }'
+        KinesisStreamParameters:
+          BatchSize: 1
+          # MaximumBatchingWindowInSeconds: 10
+          MaximumRetryAttempts: 1
+          StartingPosition: TRIM_HORIZON
+      Target: !GetAtt PublishEventsWorkflow.Arn
+      TargetParameters:
+        StepFunctionStateMachineParameters:
+          InvocationType: FIRE_AND_FORGET
+        InputTemplate: |
+          {
+            "change": <$.data.eventName>,
+            "flight": {
+              "flightId": <$.data.dynamodb.Keys.flightId.S>,
+              "airlineCode": <$.data.dynamodb.NewImage.airlineCode.S>,
+              "createdAt": <$.data.dynamodb.NewImage.createdAt.S>,
+              "dest": <$.data.dynamodb.NewImage.dest.S>,
+              "event": <$.data.dynamodb.NewImage.event.S>,
+              "eventDetails": <$.data.dynamodb.NewImage.eventDetails.S>,
+              "flightNum": <$.data.dynamodb.NewImage.flightNum.S>,
+              "gate": <$.data.dynamodb.NewImage.gate.S>,
+              "origin": <$.data.dynamodb.NewImage.origin.S>,
+              "terminal": <$.data.dynamodb.NewImage.terminal.N>,
+              "updatedAt": <$.data.dynamodb.NewImage.updatedAt.S>
+            }
+          }
+      RoleArn: !GetAtt PublishEventPipeRole.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  PublishEventsWorkflow:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: !Sub ${ProjectName}-PublishEvents
+      DefinitionUri: ../src/workflows/publishEvents.asl.yaml
+      DefinitionSubstitutions:
+        EventsApiEndpoint: !Sub "https://${EventsApi.Dns.Http}/event"
+        EventsApiConnectionArn: !GetAtt EventsApiConnection.Arn
+        Channel: "flights/events"
+      Type: STANDARD
+      Policies:
+        # see https://docs.aws.amazon.com/step-functions/latest/dg/connect-third-party-apis.html#connect-http-task-permissions
+        - Statement:
+            Effect: Allow
+            Action: states:InvokeHTTPEndpoint
+            Resource: !Sub arn:aws:states:${AWS::Region}:${AWS::AccountId}:stateMachine:* # cannot reference only this state machine
+            Condition:
+              StringLike:
+                # allow the state machine to call our two endpoints, any HTTP method
+                states:HTTPEndpoint:
+                  - !Sub "https://${EventsApi.Dns.Http}/event"
+        - Statement:
+            Effect: Allow
+            Action: events:RetrieveConnectionCredentials
+            Resource:
+              - !GetAtt EventsApiConnection.Arn
+        - Statement:
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource: arn:aws:secretsmanager:*:*:secret:events!connection/*
+
+  EventsApiConnection:
+    Type: AWS::Events::Connection
+    Properties:
+      # AuthorizationType: API_KEY
+      # AuthParameters:
+      #   ApiKeyAuthParameters:
+      #     ApiKeyName: "x-api-key"
+      #     ApiKeyValue: !Ref EventsApiKey
+      AuthorizationType: OAUTH_CLIENT_CREDENTIALS
+      Description: Connection for AppSync Events API
+      AuthParameters:
+        OAuthParameters:
+          AuthorizationEndpoint: !Sub "https://${ServiceUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+          ClientParameters:
+            ClientID: !GetAtt ServiceUserPoolClient.ClientId
+            ClientSecret: !GetAtt ServiceUserPoolClient.ClientSecret
+          HttpMethod: POST
+          OAuthHttpParameters:
+            BodyParameters:
+              - Key: grant_type
+                Value: client_credentials
+              - Key: scope
+                Value: !Sub "${AuthDomain}/flight-events"
+  
+  EventsApiDestination:
+    Type: AWS::Events::ApiDestination
+    Properties:
+      ConnectionArn: !GetAtt EventsApiConnection.Arn
+      HttpMethod: POST
+      InvocationEndpoint: !Sub "https://${EventsApi.Dns.Http}/event"
+
+  PublishSeatAssignmentEvent:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Publish seat assignment to events API
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/flights/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: "flights.seats"
+        detail-type:
+          - prefix: "Seat assignment"
+      Targets:
+        - Arn: !GetAtt EventsApiDestination.Arn
+          RoleArn: !GetAtt EventBridgeInvokeEventsApiRole.Arn
+          Id: PublishSeatAssignment
+          HttpParameters:
+            HeaderParameters:
+              "Content-Type": "application/json"
+          InputTransformer:
+            InputPathsMap:
+              channel: $.detail.seatChannel
+              flightId: $.detail.seatAssignment.flightId
+              newSeat: $.detail.seatAssignment.newSeat
+              upgradeType: $.detail.seatAssignment.upgradeType
+              userId: $.detail.seatAssignment.userId
+              airlineCode: $.detail.seatAssignment.airlineCode
+              flightNum: $.detail.seatAssignment.flightNum
+            InputTemplate:  |
+              {
+                "channel": "<channel>",
+                "events": [
+                  "{\"flightId\": \"<flightId>\",\"newSeat\": \"<newSeat>\",\"upgradeType\": \"<upgradeType>\",\"userId\": \"<userId>\",\"airlineCode\": \"<airlineCode>\",\"flightNum\": \"<flightNum>\"}"
+                ]
+              }
+
+  EventBridgeInvokeEventsApiRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: invoke-events-api-destination
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sqs:SendMessage
+                Resource: "*"
+              - Effect: Allow
+                Action: events:InvokeApiDestination
+                Resource: !GetAtt EventsApiDestination.Arn
+              # - Effect: Allow
+              #   Action: events:RetrieveConnectionCredentials
+              #   Resource: !GetAtt EventsApiConnection.Arn
+              # - Effect: Allow
+              #   Action:
+              #     - secretsmanager:GetSecretValue
+              #     - secretsmanager:DescribeSecret
+              #   Resource: arn:aws:secretsmanager:*:*:secret:events!connection/*
+
+  #
+  # EventBridge Pipe - misc
+  #
+  PublishEventPipeLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/pipes/${ProjectName}/EventsPipes"
+
+  PublishEventPipeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - pipes.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: !Sub ${ProjectName}-PublishEventPipeRole
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:StartExecution
+                Resource: !GetAtt PublishEventsWorkflow.Arn
+              - Effect: Allow
+                Action:
+                  - kinesis:DescribeStream
+                  - kinesis:DescribeStreamSummary
+                  - kinesis:GetRecords
+                  - kinesis:GetShardIterator
+                  - kinesis:ListStreams
+                  - kinesis:ListShards
+                Resource: "{{resolve:ssm:/patterns/eventdriven/flights/stream/arn}}"
+              - Effect: Allow
+                Action: kinesis:ListStreams
+                Resource: "*"
+
+  #
+  # Cognito - enable OpenID Connect auth for AppSync Event publishing
+  #
+  ServiceUserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AutoVerifiedAttributes:
+        - email
+      UserPoolName: !Sub "${ProjectName}-user-pool"
+      Schema:
+        - Name: email
+          AttributeDataType: String
+          Mutable: false
+          Required: true
+        - Name: name
+          AttributeDataType: String
+          Mutable: true
+          Required: true
+
+  ServiceUserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref AuthDomain
+      UserPoolId: !Ref ServiceUserPool
+  
+  ServiceUserPoolResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      Identifier: !Ref AuthDomain
+      Name: !Sub "${ProjectName}-ResourceServer"
+      UserPoolId: !Ref ServiceUserPool
+      Scopes:
+        - ScopeDescription: Publish flight events
+          ScopeName: flight-events
+        - ScopeDescription: Publish seat assignment updates
+          ScopeName: seat-assignment
+
+  ServiceUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ServiceUserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref ServiceUserPool
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows:
+        - client_credentials
+      AllowedOAuthScopes:
+        - !Sub "${AuthDomain}/flight-events"
+        - !Sub "${AuthDomain}/seat-assignment"
+      GenerateSecret: true
+      PreventUserExistenceErrors: ENABLED
+
+  # AuthEndpointParameter:
+  #   Type: AWS::SSM::Parameter
+  #   Properties:
+  #     Name: !Sub "/${ProjectName}/lookup/auth-endpoint"
+  #     Description: !Sub "Authorization endpoint for ${ProjectName}"
+  #     Type: String
+  #     Value: !Sub "https://${LookupServiceUserPoolDomain}.auth.${AWS::Region}.amazoncognito.com/oauth2/token"
+  #     Tags:
+  #       ProjectName: !Ref ProjectName
+  
+  # LookupAppClientCredentials:
+  #   Type: AWS::SecretsManager::Secret
+  #   DeletionPolicy: Delete
+  #   UpdateReplacePolicy: Delete
+  #   Properties:
+  #     Name: !Sub "${ProjectName}/lookup/app-client-creds"
+  #     Description: !Sub "Application client credentials for ${ProjectName}"
+  #     # Values are available because `GenerateSecret` is set to true for user pool client
+  #     # Neither .ClientId nor .ClientSecret seem to be documented
+  #     SecretString: !Sub '{ "clientId": "${LookupServiceUserPoolClient.ClientId}", "clientSecret": "${LookupServiceUserPoolClient.ClientSecret}" }'
+  #     Tags:
+  #       - Key: ProjectName
+  #         Value: !Ref ProjectName
+
+Outputs:
+  Endpoint:
+    Description: AppSync Events endpoint
+    Value: !Sub "https://${EventsApi.Dns.Http}/event"
+
+  ApiKey:
+    Description: Event API Key
+    Value: !GetAtt FlightStatusApiKey.ApiKey

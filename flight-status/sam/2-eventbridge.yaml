@@ -1,0 +1,329 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  re:Invent 2024
+  API305 - Asynchronous frontends: Building seamless event-driven experiences
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+Resources:
+  #
+  # EventBridge Rule targeting the GraphQL API for customer-events
+  #
+  CreateFlightStatusRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Handle new flight events
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/flights/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: 'flights.events'
+        detail-type:
+          - "New flight scheduled"
+          # Special type for loading data, only applicable in pattern 2
+          - "[Load] New flight scheduled"
+      Targets:
+        - Arn: !GetAtt FlightStatusGraphqlApi.GraphQLEndpointArn
+          Id: FlightStatusCreateFlight
+          RoleArn: !GetAtt FlightStatusApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation CreateFlight($input: CreateFlightInput!) {
+                createFlight(input: $input) {
+                  flightId
+                  origin
+                  dest
+                  airlineCode
+                  flightNum
+                  gate
+                  terminal
+                  event
+                  eventDetails
+                  createdAt
+                  updatedAt
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              flightId: $.detail.flightId
+              origin: $.detail.origin
+              dest: $.detail.dest
+              event: $.detail.event
+              eventDetails: $.detail.eventDetails
+              airlineCode: $.detail.airlineCode
+              flightNum: $.detail.flightNum
+              gate: $.detail.gate
+              terminal: $.detail.terminal
+            InputTemplate: |-
+              {
+                "input": {
+                  "flightId": "<flightId>",
+                  "origin": "<origin>",
+                  "dest": <dest>,
+                  "event": "<event>",
+                  "eventDetails": "<eventDetails>",
+                  "airlineCode": "<airlineCode>",
+                  "flightNum": "<flightNum>",
+                  "gate": "<gate>",
+                  "terminal": "<terminal>"
+                } 
+              }
+  
+  UpdateFlightStatusRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Handle flight status updates
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/flights/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: 'flights.events'
+        detail-type:
+          - "Flight status updated"
+      Targets:
+        - Arn: !GetAtt FlightStatusGraphqlApi.GraphQLEndpointArn
+          Id: FlightStatusUpdateFlight
+          RoleArn: !GetAtt FlightStatusApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation UpdateFlight($input: UpdateFlightInput!) {
+                updateFlight(input: $input) {
+                  flightId
+                  origin
+                  dest
+                  airlineCode
+                  flightNum
+                  gate
+                  terminal
+                  event
+                  eventDetails
+                  createdAt
+                  updatedAt
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              flightId: $.detail.flightId
+              event: $.detail.event
+              eventDetails: $.detail.eventDetails
+            InputTemplate: |-
+              {
+                "input": {
+                  "flightId": "<flightId>",
+                  "event": "<event>",
+                  "eventDetails": "<eventDetails>"
+                } 
+              }
+
+  DeleteFlightStatusRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Handle flight deletion
+      EventBusName: "{{resolve:ssm:/patterns/eventdriven/flights/eventbus/name}}"
+      EventPattern:
+        source:
+          - prefix: 'flights.events'
+        detail-type:
+          - "[Reset] Flight deleted"
+      Targets:
+        - Arn: !GetAtt FlightStatusGraphqlApi.GraphQLEndpointArn
+          Id: FlightStatusDeleteFlight
+          RoleArn: !GetAtt FlightStatusApiRuleRole.Arn
+          AppSyncParameters:
+            GraphQLOperation: >-
+              mutation DeleteFlight($flightId: ID!) {
+                deleteFlight(flightId: $flightId) {
+                  flightId
+                }
+              }
+          InputTransformer:
+            InputPathsMap:
+              flightId: $.detail.flightId
+            InputTemplate: |-
+              {
+                "flightId": "<flightId>"
+              }
+
+  #
+  # GraphQL API
+  #
+  FlightStatusGraphqlApi:
+    Type: AWS::Serverless::GraphQLApi
+    Properties:
+      Name: Pattern2-FlightStatusGraphqlApi
+      SchemaUri: ../src/graphql/schema.graphql
+      Auth:
+        Type: AWS_IAM
+      LogConfig:
+        FieldLogLevel: ERROR
+      DataSources:
+        DynamoDb:
+          FlightStatusTableDataSource:
+            Permissions:
+              - Read
+              - Write
+            TableArn: !GetAtt FlightStatusTable.Arn
+            TableName: !Ref FlightStatusTable
+      Functions:
+        createFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/createFlightStatus.js
+        listFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/listFlightStatus.js
+        getFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/getFlightStatus.js
+        updateFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/updateFlightStatus.js
+        deleteFlightStatus:
+          Runtime:
+            Name: APPSYNC_JS
+            Version: 1.0.0
+          DataSource: FlightStatusTableDataSource
+          CodeUri: ../src/graphql/resolvers/deleteFlightStatus.js
+      Resolvers:
+        Mutation:
+          createFlightStatus:
+            FieldName: createFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - createFlightStatus
+          updateFlightStatus:
+            FieldName: updateFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - updateFlightStatus
+          deleteFlightStatus:
+            FieldName: deleteFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - deleteFlightStatus
+        Query:
+          listFlightStatus:
+            FieldName: listFlights
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - listFlightStatus
+          getFlightStatus:
+            FieldName: getFlight
+            Runtime:
+              Name: APPSYNC_JS
+              Version: "1.0.0"
+            Pipeline:
+              - getFlightStatus
+      Tags:
+        ProjectName: !Ref ProjectName
+      XrayEnabled: true
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3002
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  # NOTE: This pattern maintains a duplicate flight status table in DynamoDB
+  # due to the tight coupling within components of this pattern.
+  #
+  FlightStatusTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: flightId
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: flightId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: false
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  #
+  # EventBridge execution role
+  #
+  FlightStatusApiRuleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - events.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowAccessToGraphQLApi
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - appsync:GraphQL
+                Resource:
+                  - !Sub "${FlightStatusGraphqlApi.Arn}/*"
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  #
+  # Allow the frontend unauth role to access GraphQL resources
+  #
+  Pattern2GraphQLAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - "{{resolve:ssm:/patterns/eventdriven/frontend/unauth/role}}"
+      PolicyName: pattern2-allow-graphql
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:GraphQL
+            Resource:
+              - !Sub "${FlightStatusGraphqlApi.Arn}/*"
+
+Outputs:
+  GraphQLEndpoint:
+    Description: "GraphQL endpoint"
+    Value: !Sub "https://${FlightStatusGraphqlApi.GraphQLDns}/graphql"

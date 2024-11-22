@@ -1,0 +1,14 @@
+@keyframes highlightNew {
+  0% { td:nth-child(2n) { background-color: #1d4ed8; } }
+  0% { td:nth-child(2n+1) { background-color: #172554; } }
+  50% { background-color: rgb(68, 255, 115); }
+  100% { td:nth-child(2n) { background-color: #1d4ed8; } }
+  100% { td:nth-child(2n+1) { background-color: #172554; } }
+}
+
+.highlight {
+  animation-name: highlightNew;
+  animation-duration: 2s;
+  animation-fill-mode: backwards;
+  animation-iteration-count: initial;
+}

@@ -1,0 +1,30 @@
+const config = {
+  region: "", // AWS region you deployed to
+  identityPoolId: "", // `IdentityPoolId` from shared stack output
+  sharedEndpoint: "", // `ApiEndpoint` from shared stack output, you must include `/Prod` at end
+  pattern1: {
+    endpoint: "" // `GraphQLEndpoint` from pattern 1 stack output
+  },
+  pattern2: {
+    endpoint: "" // `GraphQLEndpoint` from pattern 2 stack output
+  },
+  pattern3: {
+    wssEndpoint: "", // `WebSocketEndpoint` from pattern 3 stack output, you must include `wss://` at start and `/prod` at end
+  },
+  pattern4: {
+    mqttEndpoint: "", // IoT Core endpoint for your account, see pattern 4 README
+  },
+  pattern5: {
+    endpoint: "", // `Pattern5EventsEndpoint` from pattern 5 stack output
+    apiKey: "" // `Pattern5EventsApiKey` from pattern 5 stack output
+  },
+  polling: {
+    endpoint: "" // `ApiEndpoint` from polling stack output
+  },
+  push: {
+    applicationServerKey: "" // your public key for web push, see push pattern README for details
+  }
+};
+
+export default config;
+

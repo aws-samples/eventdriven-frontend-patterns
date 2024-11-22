@@ -1,0 +1,8 @@
+[
+  {
+    "DetailType": "Flight status updated",
+    "Source": "flights.events",
+    "EventBusName": "flights.events",
+    "Detail": "{\"flightId\": \"5d11ca87-61b0-46b1-b7cd-d252a53ad5f2\",\"event\": \"DEPARTURE_DELAYED\", \"eventDetails\": \"Weather delay.\"}"
+  }
+]

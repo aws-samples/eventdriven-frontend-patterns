@@ -1,0 +1,27 @@
+{
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.136",
+    "esbuild": "^0.20.2"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "^5.2.0",
+    "@aws-lambda-powertools/logger": "^2.0.2",
+    "@aws-lambda-powertools/parser": "^2.9.0",
+    "@aws-sdk/client-apigatewaymanagementapi": "^3.540.0",
+    "@aws-sdk/client-dynamodb": "^3.658.1",
+    "@aws-sdk/client-eventbridge": "^3.534.0",
+    "@aws-sdk/client-iot-data-plane": "^3.540.0",
+    "@aws-sdk/client-scheduler": "^3.533.0",
+    "@aws-sdk/client-sfn": "^3.533.0",
+    "@aws-sdk/credential-providers": "^3.658.1",
+    "@aws-sdk/lib-dynamodb": "^3.658.1",
+    "@aws-sdk/util-dynamodb": "^3.658.1",
+    "@middy/core": "^5.5.0",
+    "@smithy/signature-v4": "^2.2.0",
+    "axios": "^1.6.8",
+    "date-fns": "^3.4.0",
+    "ksuid": "^3.0.0",
+    "web-push": "^3.6.7",
+    "zod": "^3.23.8"
+  }
+}

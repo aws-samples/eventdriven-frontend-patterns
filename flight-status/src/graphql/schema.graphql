@@ -1,0 +1,84 @@
+# Partial schema. We're not concerned with modelling customer, address, etc.
+# for the purposes of this sample.
+
+type Flight {
+  flightId: ID!
+  origin: String!
+  dest: String!
+  airlineCode: String!
+  flightNum: String!
+  gate: String!
+  terminal: Int!
+  event: StatusEvent!
+  eventDetails: String!
+  createdAt: AWSDateTime!
+  updatedAt: AWSDateTime
+}
+
+type FlightsConnection {
+  items: [Flight]!
+  nextToken: String
+}
+
+input CreateFlightInput {
+  flightId: ID!
+  origin: String
+  dest: String!
+  airlineCode: String!
+  flightNum: String!
+  gate: String!
+  terminal: Int!
+  event: String
+  eventDetails: String
+  createdAt: AWSDateTime
+  updatedAt: AWSDateTime
+}
+
+input UpdateFlightInput {
+  flightId: ID!
+  event: StatusEvent!
+  eventDetails: String!
+  gate: String
+  terminal: Int
+  updatedAt: AWSDateTime
+}
+
+enum StatusEvent {
+  ARRIVED_AT_GATE
+  ARRIVAL_DELAYED
+  SCHEDULED
+  BOARDING
+  CANCELLED
+  DEPARTED_GATE
+  DEPARTURE_DELAYED
+  GATE_CHANGED
+  LANDED
+  TOOK_OFF
+}
+
+type Query {
+  listFlights(limit: Int, nextToken: String): FlightsConnection
+
+  getFlight(flightId: ID!): Flight
+}
+
+type Mutation {
+  createFlight(input: CreateFlightInput!): Flight
+
+  updateFlight(input: UpdateFlightInput!): Flight
+
+  deleteFlight(flightId: ID!): Flight
+}
+
+type Subscription {
+  onUpdateFlight(flightId: ID): Flight
+    @aws_subscribe(mutations: [ "updateFlight" ])
+  onCreateFlight(flightId: ID): Flight
+    @aws_subscribe(mutations: [ "createFlight" ])
+}
+
+schema {
+  query: Query
+  mutation: Mutation
+  subscription: Subscription
+}

@@ -1,0 +1,48 @@
+Comment: Start flights simulation
+StartAt: List current executions
+States:
+  List current executions:
+    Type: Task
+    Parameters:
+      StateMachineArn.$: $$.StateMachine.Id
+      StatusFilter: RUNNING
+    Resource: arn:aws:states:::aws-sdk:sfn:listExecutions
+    Next: Choice
+    ResultPath: $.executions
+    ResultSelector:
+      running.$: $.Executions[-1:]
+  Choice:
+    Type: Choice
+    Choices:
+      - Variable: $.executions.running[0].Name
+        StringEqualsPath: $$.Execution.Name
+        Next: Simulate flights
+    Default: Success
+  Simulate flights:
+    Type: Map
+    ItemsPath: $.flights
+    Next: Success
+    ItemProcessor:
+      ProcessorConfig:
+        Mode: INLINE
+      StartAt: Set random wait
+      States:
+        Set random wait:
+          Type: Pass
+          Parameters:
+            wait.$: States.MathRandom(10, ${MaxSecondsToNextFlight})
+          Next: Wait
+          ResultPath: $.timer
+        Wait:
+          Type: Wait
+          SecondsPath: $.timer.wait
+          Next: Simulate flight
+        Simulate flight:
+          Type: Task
+          Resource: arn:aws:states:::states:startExecution.sync:2
+          Parameters:
+            StateMachineArn: ${MockFlightStatusArn}
+            Input.$: $
+          End: true
+  Success:
+    Type: Succeed

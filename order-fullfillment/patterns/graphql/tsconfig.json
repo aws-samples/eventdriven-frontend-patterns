@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "noEmit": true,
+    "moduleResolution": "node",
+    "allowJs": true
+  },
+  "include": [
+    "./resolvers/*.js"
+  ],
+  "exclude": [
+    "./schema.graphql"
+  ]
+}

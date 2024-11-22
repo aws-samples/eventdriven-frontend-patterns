@@ -1,0 +1,166 @@
+{
+  "Records": [
+    {
+      "eventID": "e7824161794958718690b5c5226a0e8b",
+      "eventName": "MODIFY",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-west-2",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1710878608,
+        "Keys": {
+          "flightId": {
+            "S": "5d11ca87-61b0-46b1-b7cd-d252a53ad5f2"
+          }
+        },
+        "NewImage": {
+          "flightId": {
+            "S": "5d11ca87-61b0-46b1-b7cd-d252a53ad5f2"
+          },
+          "origin": {
+            "S": "LAS"
+          },
+          "dest": {
+            "S": "SEA"
+          },
+          "event": {
+            "S": "DEPARTURE_DELAYED"
+          },
+          "eventDetails": {
+            "S": "Weather delay. 1 hour delay."
+          },
+          "airlineCode": {
+            "S": "SVS"
+          },
+          "flightNum": {
+            "S": "999"
+          },
+          "gate": {
+            "S": "C20"
+          },
+          "terminal": {
+            "N": "3"
+          },
+          "createdAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          },
+          "updatedAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          }
+        },
+        "SequenceNumber": "4045600000000012965908970",
+        "SizeBytes": 349,
+        "StreamViewType": "NEW_IMAGE"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-2:999999999999:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+    },
+    {
+      "eventID": "e7824161794958718690b5c5226a0e8c",
+      "eventName": "MODIFY",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-west-2",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1710878608,
+        "Keys": {
+          "flightId": {
+            "S": "f0ea2962-91ba-46c1-94b2-50bc9c77bc98"
+          }
+        },
+        "NewImage": {
+          "flightId": {
+            "S": "f0ea2962-91ba-46c1-94b2-50bc9c77bc98"
+          },
+          "origin": {
+            "S": "LAS"
+          },
+          "dest": {
+            "S": "PDX"
+          },
+          "event": {
+            "S": "CANCELLED"
+          },
+          "eventDetails": {
+            "S": "Severe thunderstorm. Grounding all planes."
+          },
+          "airlineCode": {
+            "S": "API"
+          },
+          "flightNum": {
+            "S": "111"
+          },
+          "gate": {
+            "S": "C22"
+          },
+          "terminal": {
+            "N": "3"
+          },
+          "createdAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          },
+          "updatedAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          }
+        },
+        "SequenceNumber": "4045600000000012965908971",
+        "SizeBytes": 349,
+        "StreamViewType": "NEW_IMAGE"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-2:999999999999:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+    },
+    {
+      "eventID": "e7824161794958718690b5c5226a0e8a",
+      "eventName": "MODIFY",
+      "eventVersion": "1.1",
+      "eventSource": "aws:dynamodb",
+      "awsRegion": "us-west-2",
+      "dynamodb": {
+        "ApproximateCreationDateTime": 1710878608,
+        "Keys": {
+          "flightId": {
+            "S": "a5377077-d587-43a3-8bbe-aed4f7d6a2e4"
+          }
+        },
+        "NewImage": {
+          "flightId": {
+            "S": "a5377077-d587-43a3-8bbe-aed4f7d6a2e4"
+          },
+          "origin": {
+            "S": "LAS"
+          },
+          "dest": {
+            "S": "BUR"
+          },
+          "event": {
+            "S": "ARRIVED_AT_GATE"
+          },
+          "eventDetails": {
+            "S": ""
+          },
+          "airlineCode": {
+            "S": "API"
+          },
+          "flightNum": {
+            "S": "222"
+          },
+          "gate": {
+            "S": "D14"
+          },
+          "terminal": {
+            "N": "4"
+          },
+          "createdAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          },
+          "updatedAt": {
+            "S": "2024-10-02T20:35:25.619Z"
+          }
+        },
+        "SequenceNumber": "4045600000000012965908972",
+        "SizeBytes": 349,
+        "StreamViewType": "NEW_IMAGE"
+      },
+      "eventSourceARN": "arn:aws:dynamodb:us-east-2:999999999999:table/patterns-eventdriven-frontends-pattern1-OrdersTable-87ZXQOWG1HX6/stream/2024-03-18T20:58:57.179"
+    }
+  ]
+}

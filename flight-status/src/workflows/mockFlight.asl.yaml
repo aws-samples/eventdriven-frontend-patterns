@@ -1,0 +1,56 @@
+Comment: Mocks a flight status being updated with delays, gate changes, arrivals, and cancelations.
+StartAt: Configure iterator
+States:
+  Configure iterator:
+    Type: Pass
+    ResultPath: $.iterator
+    Next: Set random wait
+    Parameters:
+      numStates.$: States.ArrayLength($.nextStates)
+      index: 0
+  Set random wait:
+    Type: Pass
+    Next: Set current state
+    Parameters:
+      wait.$: States.MathRandom(15, ${MaxWaitBetweenStatusChange})
+    ResultPath: $.timer
+  Set current state:
+    Type: Pass
+    Next: Wait
+    Parameters:
+      state.$: States.ArrayGetItem($.nextStates, $.iterator.index)
+    ResultPath: $.current
+  Wait:
+    Type: Wait
+    Next: Put status event
+    SecondsPath: $.timer.wait
+  Put status event:
+    Type: Task
+    Resource: arn:aws:states:::events:putEvents
+    Parameters:
+      Entries:
+        - Detail:
+            flightId.$: $.flightId
+            event.$: $.current.state.event
+            eventDetails.$: $.current.state.eventDetails
+          DetailType: Flight status updated
+          EventBusName: ${EventBusName}
+          Source: ${EventBusName}
+    Next: Increment index
+    ResultPath: null
+  Increment index:
+    Type: Pass
+    Parameters:
+      numStates.$: States.ArrayLength($.nextStates)
+      index.$: States.MathAdd($.iterator.index, 1)
+    ResultPath: $.iterator
+    Next: More?
+  More?:
+    Type: Choice
+    Choices:
+      - Variable: $.iterator.index
+        NumericLessThanPath: $.iterator.numStates
+        Next: Set random wait
+    Default: Success
+  Success:
+    Type: Succeed

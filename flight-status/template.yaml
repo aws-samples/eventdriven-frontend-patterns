@@ -1,0 +1,229 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: |
+  re:Invent 2024 API305 - Asynchronous frontends: Building seamless event-driven experiences
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+
+  IoTCoreEndpoint:
+    Description: IoT Core endpoint for account (DNS name only)
+    Type: String
+
+  MaxSecondsToNextFlight:
+    Description: Maximum wait before next FlightStatus is simulated
+    Type: Number
+    Default: 30
+    MaxValue: 360
+
+  MaxWaitBetweenStatusChange:
+    Description: Maximum wait before next status is simulated
+    Type: Number
+    Default: 40
+    MaxValue: 360
+
+  AuthDomain:
+    Description: Name for the domain that hosts sign-up and sign-in (must be unique)
+    Type: String
+
+  pDeployPattern0:
+    Description: Deploy pattern 0
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+  pDeployPattern1:
+    Description: Deploy pattern 1
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+  pDeployPattern2:
+    Description: Deploy pattern 2
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+  pDeployPattern3:
+    Description: Deploy pattern 3
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+  pDeployPattern4:
+    Description: Deploy pattern 4
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+  pDeployPattern5:
+    Description: Deploy pattern 5
+    Default: true
+    Type: String
+    AllowedValues:
+      - true
+      - false
+    ConstraintDescription: Must specify true / false
+
+Conditions:
+  DeployPattern0: !Equals
+    - true
+    - !Ref pDeployPattern0
+  DeployPattern1: !Equals
+    - true
+    - !Ref pDeployPattern1
+  DeployPattern2: !Equals
+    - true
+    - !Ref pDeployPattern2
+  DeployPattern3: !Equals
+    - true
+    - !Ref pDeployPattern3
+  DeployPattern4: !Equals
+    - true
+    - !Ref pDeployPattern4
+  DeployPattern5: !Equals
+    - true
+    - !Ref pDeployPattern5
+
+Resources:
+  Shared:
+    Type: AWS::Serverless::Application
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Location: ./sam/shared.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        MaxSecondsToNextFlight: !Ref MaxSecondsToNextFlight
+        MaxWaitBetweenStatusChange: !Ref MaxWaitBetweenStatusChange
+
+  Pattern0:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern0
+    Properties:
+      Location: ./sam/0-polling.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  Pattern1:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern1
+    Properties:
+      Location: ./sam/1-appsync.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  Pattern2:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern2
+    Properties:
+      Location: ./sam/2-eventbridge.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  Pattern3:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern3
+    Properties:
+      Location: ./sam/3-apigw.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+
+  Pattern4:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern4
+    Properties:
+      Location: ./sam/4-iot.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        IoTCoreEndpoint: !Ref IoTCoreEndpoint
+
+  Pattern5:
+    Type: AWS::Serverless::Application
+    DependsOn: Shared
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Condition: DeployPattern5
+    Properties:
+      Location: ./sam/5-appsync-events.yaml
+      Parameters:
+        ProjectName: !Ref ProjectName
+        AuthDomain: !Ref AuthDomain
+
+Outputs:
+  SharedApiEndpoint:
+    Description: App config - API endpoint
+    Value: !GetAtt Shared.Outputs.ApiEndpoint
+
+  IdentityPoolId:
+    Description: App config - identityPoolId
+    Value: !GetAtt Shared.Outputs.IdentityPoolId
+
+  Pattern0EndPoint:
+    Condition: DeployPattern0
+    Description: App config - polling.endpoint
+    Value: !GetAtt Pattern0.Outputs.ApiEndpoint
+
+  Pattern1GraphQLEndpoint:
+    Condition: DeployPattern1
+    Description: App config - pattern1.endpoint
+    Value: !GetAtt Pattern1.Outputs.GraphQLEndpoint
+
+  Pattern2GraphQLEndpoint:
+    Condition: DeployPattern2
+    Description: App config - pattern2.endpoint
+    Value: !GetAtt Pattern2.Outputs.GraphQLEndpoint
+
+  Pattern3WebSocketEndpoint:
+    Condition: DeployPattern3
+    Description: App config - pattern3.endpoint
+    Value: !GetAtt Pattern3.Outputs.WebSocketEndpoint
+
+  Pattern4IoTEndpoint:
+    Description: App config - mqttEndpoint
+    Value: !Ref IoTCoreEndpoint
+
+  Pattern5EventsEndpoint:
+    Condition: DeployPattern5
+    Description: App config - pattern5.endpoint
+    Value: !GetAtt Pattern5.Outputs.Endpoint
+
+  Pattern5EventsApiKey:
+    Condition: DeployPattern5
+    Description: App config - pattern5.apiKey
+    Value: !GetAtt Pattern5.Outputs.ApiKey

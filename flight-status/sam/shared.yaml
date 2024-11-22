@@ -1,0 +1,529 @@
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+---
+AWSTemplateFormatVersion: "2010-09-09"
+
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  re:Invent 2024
+  API305 - Asynchronous frontends: Building seamless event-driven experiences
+
+Parameters:
+  ProjectName:
+    Description: Name for this project
+    Type: String
+    Default: patterns-eventdriven-frontends
+  
+  MaxSecondsToNextFlight:
+    Description: Maximum wait before next FlightStatus is simulated
+    Type: Number
+    Default: 20
+    MaxValue: 360
+
+  MaxWaitBetweenStatusChange:
+    Description: Maximum wait before next status is simulated
+    Type: Number
+    Default: 30
+    MaxValue: 360
+
+Globals:
+  Function:
+    Architectures:
+      - arm64
+    MemorySize: 256
+    Timeout: 10
+    Tracing: Active
+    Runtime: nodejs20.x
+    Tags:
+      ProjectName: !Ref ProjectName
+  Api:
+    Auth:
+      AddDefaultAuthorizerToCorsPreflight: false
+      DefaultAuthorizer: AWS_IAM
+      InvokeRole: null
+    Cors:
+      AllowOrigin: "'http://localhost:5173'"
+      AllowHeaders: "'content-type, x-amz-security-token, x-amz-date, authorization'"
+      AllowMethods: "'GET,POST,DELETE,OPTIONS'"
+    TracingEnabled: true
+
+Resources:
+  #
+  # EventBridge - Custom event bus for FlightStatus events
+  #
+  FlightStatusEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: flights.events
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  #
+  # Push all events to CloudWatch Logs Group
+  #
+  FlightStatusEventsToCloudWatchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Push all flight events to CloudWatch
+      EventBusName: !GetAtt FlightStatusEventBus.Name
+      EventPattern:
+        source:
+          - prefix: 'flights.'
+      Name: all-flights-to-cw
+      State: ENABLED
+      Targets:
+        - Id: all-events-cw
+          Arn: !GetAtt FlightStatusEventsLogGroup.Arn
+
+  FlightStatusEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupClass: STANDARD
+      RetentionInDays: 7
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+  
+  FlightStatusEventsLogGroupPolicy:
+    Type: AWS::Logs::ResourcePolicy
+    Properties:
+      PolicyName: !Sub "${ProjectName}-EventBridgeTargetPolicy"
+      PolicyDocument: !Sub "{ \"Version\": \"2012-10-17\", \"Statement\": [ { \"Sid\": \"TrustEventsToStoreLogEvents\", \"Effect\": \"Allow\", \"Principal\": { \"Service\": [ \"events.amazonaws.com\",\"delivery.logs.amazonaws.com\",\"pipes.amazonaws.com\" ] }, \"Action\":[\"logs:PutLogEvents\",\"logs:CreateLogStream\"], \"Resource\": \"${FlightStatusEventsLogGroup.Arn}\" } ] }"
+  
+  #
+  # Lambda function - event handler (new, update FlightStatus)
+  #
+  HandleFlightStatusEventsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ./src/functions/events/handleFlightStatusEvents.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FlightStatusTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          FlightStatusTable: !Ref FlightStatusTable
+          POWERTOOLS_SERVICE_NAME: handleFlightStatusEvents
+      Events:
+        CreateUpdateFlightStatusRule:
+          Type: EventBridgeRule
+          Properties:
+            EventBusName: !GetAtt FlightStatusEventBus.Name
+            Pattern:
+              source:
+                - prefix: 'flights.events'
+              detail-type:
+                - "New flight scheduled"
+                - "Flight status updated"
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: false
+        Target: ES2020
+        EntryPoints:
+          - ./src/functions/events/handleFlightStatusEvents.js
+
+  HandleFlightStatusEventsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: HandleFlightStatusEventsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${HandleFlightStatusEventsFunction}"
+  
+  #
+  # Lambda function - API handler (GET getAllFlights)
+  #
+  GetAllFlightsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ./src/functions/api/getAllFlights.handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref FlightStatusTable
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          FlightStatusTable: !Ref FlightStatusTable
+          POWERTOOLS_SERVICE_NAME: getAllFlights
+      Events:
+        GetFlightStatusApi:
+          Type: Api
+          Properties:
+            Path: /flights
+            Method: GET
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: false
+        Target: ES2020
+        EntryPoints:
+          - ./src/functions/api/getAllFlights.js
+
+  GetAllFlightsFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    DependsOn: GetAllFlightsFunction
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${GetAllFlightsFunction}"
+
+  #
+  # Lambda function - API handler (POST loadData)
+  #
+  LoadFlightDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ./src/functions/simulator/loadData.handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref FlightStatusTable
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref FlightStatusEventBus
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          FlightStatusTable: !Ref FlightStatusTable
+          FlightStatusEventBus: !Ref FlightStatusEventBus
+          POWERTOOLS_SERVICE_NAME: loadFlightData
+      Events:
+        LoadFlightDataApi:
+          Type: Api
+          Properties:
+            Path: /flights
+            Method: POST
+        DeleteFlightDataApi:
+          Type: Api
+          Properties:
+            Path: /flights
+            Method: DELETE
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: false
+        Target: ES2020
+        EntryPoints:
+          - ./src/functions/simulator/loadData.js
+
+  LoadFlightDataFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 3
+      LogGroupName: !Sub "/aws/lambda/${LoadFlightDataFunction}"
+
+  FlightProducerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: ./src/functions/simulator/publishFlightEvent.handler
+      Policies:
+        # Allow the function to pass the scheduler role
+        - Statement:
+            Effect: Allow
+            Action:
+              - "iam:GetRole"
+              - "iam:PassRole"
+            Resource: !GetAtt SchedulerRole.Arn
+        # Allow function to schedule the next publish
+        - Statement:
+            Effect: Allow
+            Action: "scheduler:CreateSchedule"
+            Resource: "*"
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref FlightStatusEventBus
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt StartFlightsSimulationStateMachine.Name
+      Tags:
+        ProjectName: !Ref ProjectName
+      Environment:
+        Variables:
+          EventBusArn: !GetAtt FlightStatusEventBus.Arn
+          MaxSecondsToNextFlightStatus: !Ref MaxSecondsToNextFlight
+          StartFlightSimulationWorkflow: !Ref StartFlightsSimulationStateMachine
+          SchedulerRoleArn: !GetAtt SchedulerRole.Arn
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Method: POST
+            Path: /start-producer
+      #       Auth:
+      #         Authorizer: AWS_IAM
+      #         # want to use API GW role to invoke instead of the caller
+      #         InvokeRole: !GetAtt ApiGatewayRole.Arn
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Sourcemap: false
+        Target: ES2020
+        EntryPoints:
+          - ./src/functions/simulator/publishFlightEvent.js
+
+  #
+  # Step Functions - start flight simulation
+  #
+  StartFlightsSimulationStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Name: !Sub "${ProjectName}-StartFlightsSimulation"
+      DefinitionUri: ../src/workflows/startFlightsSimulation.asl.yaml
+      DefinitionSubstitutions:
+        MaxSecondsToNextFlight: !Ref MaxSecondsToNextFlight
+        MockFlightStatusArn: !Ref MockFlightStatusStateMachine
+      Policies:
+        - StepFunctionsExecutionPolicy:
+            StateMachineName: !GetAtt MockFlightStatusStateMachine.Name
+        - Statement:
+            Effect: Allow
+            Action: states:ListExecutions
+            Resource: "*"
+        # Following are required for sync invoke of state machine + above execution policy
+        # see https://docs.aws.amazon.com/step-functions/latest/dg/connect-stepfunctions.html#stepfunctions-iam
+        - Statement:
+            Effect: Allow
+            Action:
+              - states:DescribeExecution
+              - states:StopExecution
+            Resource: !Sub "arn:aws:states:${AWS::Region}:${AWS::AccountId}:execution:${MockFlightStatusStateMachine.Name}"
+        - Statement:
+            Effect: Allow
+            Action:
+              - events:PutTargets
+              - events:PutRule
+              - events:DescribeRule
+            Resource: !Sub "arn:aws:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForStepFunctionsExecutionRule"
+
+  #
+  # Step Functions - mock flight workflow
+  #
+  MockFlightStatusStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Type: STANDARD
+      Name: !Sub "${ProjectName}-MockFlightStatus"
+      DefinitionUri: ../src/workflows/mockFlight.asl.yaml
+      DefinitionSubstitutions:
+        EventBusName: !Ref FlightStatusEventBus
+        MaxWaitBetweenStatusChange: !Ref MaxWaitBetweenStatusChange
+      Policies:
+        - EventBridgePutEventsPolicy:
+            EventBusName: !Ref FlightStatusEventBus
+
+  #
+  # DynamoDB - View Model Table (shared across all patterns)
+  #
+  FlightStatusTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      AttributeDefinitions:
+        - AttributeName: flightId
+          AttributeType: S
+      BillingMode: PAY_PER_REQUEST
+      KeySchema:
+        - AttributeName: flightId
+          KeyType: HASH
+      KinesisStreamSpecification:
+        StreamArn: !GetAtt FlightStatusStream.Arn
+      SSESpecification:
+        SSEEnabled: false
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+
+  FlightStatusStream:
+    Type: AWS::Kinesis::Stream
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      StreamModeDetails:
+        StreamMode: ON_DEMAND
+      RetentionPeriodHours: 24
+      Tags:
+        - Key: ProjectName
+          Value: !Ref ProjectName
+
+  #
+  # Auth Resources
+  #
+  IdentityPool:
+    Type: AWS::Cognito::IdentityPool
+    Properties:
+      AllowUnauthenticatedIdentities: true
+
+  UnauthRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: cognito-identity.amazonaws.com
+            Action:
+              - sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                cognito-identity.amazonaws.com:aud: !Ref IdentityPool
+              ForAnyValue:StringLike:
+                cognito-identity.amazonaws.com:amr: unauthenticated
+
+  IdentityPoolAttachment:
+    Type: AWS::Cognito::IdentityPoolRoleAttachment
+    Properties:
+      IdentityPoolId: !Ref IdentityPool
+      Roles:
+        unauthenticated: !GetAtt UnauthRole.Arn
+
+  #
+  # Allow the frontend unauth role to access API GW resources
+  #
+  ApiGwAccessPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref UnauthRole
+      PolicyName: shared-allow-apigw-access
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: execute-api:Invoke
+            Resource:
+              - !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${ServerlessRestApi}/*"
+
+  SchedulerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - scheduler.amazonaws.com
+            Action: sts:AssumeRole
+  
+  SchedulerRolePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref SchedulerRole
+      PolicyName: invoke-and-schedule-policy
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: lambda:InvokeFunction
+            Resource: !GetAtt FlightProducerFunction.Arn
+          - Effect: Allow
+            Action: events:PutEvents
+            Resource: !GetAtt FlightStatusEventBus.Arn
+
+  #
+  # SSM Parameters - for convenience later
+  #
+  FlightStatusEventBusNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/flights/eventbus/name
+      Type: String
+      Value: !GetAtt FlightStatusEventBus.Name
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  FlightStatusEventBusArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/flights/eventbus/arn
+      Type: String
+      Value: !GetAtt FlightStatusEventBus.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+  
+  FlightStatusStreamArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/flights/stream/arn
+      Type: String
+      Value: !GetAtt FlightStatusStream.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  FlightStatusTableNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/flights/table/name
+      Type: String
+      Value: !Ref FlightStatusTable
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  FlightStatusTableArnParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/flights/table/arn
+      Type: String
+      Value: !GetAtt FlightStatusTable.Arn
+      Tags:
+        ProjectName: !Ref ProjectName
+
+  FlightStatusUnauthRoleNameParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/frontend/unauth/role
+      Type: String
+      Value: !Ref UnauthRole
+      Tags:
+        ProjectName: !Ref ProjectName
+  
+  FlightStatusIdentityPoolId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /patterns/eventdriven/frontend/identity/pool
+      Type: String
+      Value: !Ref IdentityPool
+      Tags:
+        ProjectName: !Ref ProjectName
+
+Outputs:
+  FlightStatusEventLogs:
+    Description: Cloudwatch Logs Group that shows the raw incoming events
+    Value: !Ref FlightStatusEventsLogGroup
+
+  FlightStatusEventBusArn:
+    Description: EventBridge Event Bus ARN to which events are published
+    Value: !GetAtt FlightStatusEventBus.Arn
+  
+  FlightStatusEventBusName:
+    Description: EventBridge Event Bus to which events are published
+    Value: !GetAtt FlightStatusEventBus.Name
+
+  IdentityPoolId:
+    Description: Cognito identity pool id
+    Value: !Ref IdentityPool
+  
+  ApiEndpoint:
+    Description: Endpoint for the shared API services
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod"

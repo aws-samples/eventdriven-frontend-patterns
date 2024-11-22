@@ -1,0 +1,40 @@
+Comment: Publish flight status change events to AppSync Events API
+StartAt: Iterate
+States:
+  Iterate:
+    Type: Map
+    ItemProcessor:
+      ProcessorConfig:
+        Mode: INLINE
+      StartAt: Encode JSON
+      States:
+        Encode JSON:
+          Type: Pass
+          Parameters:
+            change.$: $.change
+            flight.$: $.flight
+            channel.$: States.Format('${Channel}/{}/{}', $.flight.airlineCode, $.flight.flightNum)
+            encoded.$: States.JsonToString($.flight)
+          Next: Publish to Events API
+        Publish to Events API:
+          Type: Task
+          Resource: arn:aws:states:::http:invoke
+          Parameters:
+            Method: POST
+            ApiEndpoint: ${EventsApiEndpoint}
+            Authentication:
+              ConnectionArn: ${EventsApiConnectionArn}
+            RequestBody:
+              channel.$: $.channel
+              events.$: States.Array($.encoded)
+            Headers:
+              Content-Type: application/json
+          Retry:
+            - ErrorEquals:
+                - States.ALL
+              BackoffRate: 2
+              IntervalSeconds: 1
+              MaxAttempts: 2
+              JitterStrategy: FULL
+          End: true
+    End: true

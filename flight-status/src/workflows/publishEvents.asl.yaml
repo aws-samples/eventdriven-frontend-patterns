@@ -1,3 +1,4 @@
+QueryLanguage: JSONata
 Comment: Publish flight status change events to AppSync Events API
 StartAt: Iterate
 States:
@@ -6,27 +7,19 @@ States:
     ItemProcessor:
       ProcessorConfig:
         Mode: INLINE
-      StartAt: Encode JSON
+      StartAt: Publish to Events API
       States:
-        Encode JSON:
-          Type: Pass
-          Parameters:
-            change.$: $.change
-            flight.$: $.flight
-            channel.$: States.Format('${Channel}/{}/{}', $.flight.airlineCode, $.flight.flightNum)
-            encoded.$: States.JsonToString($.flight)
-          Next: Publish to Events API
         Publish to Events API:
           Type: Task
           Resource: arn:aws:states:::http:invoke
-          Parameters:
-            Method: POST
+          Arguments:
             ApiEndpoint: ${EventsApiEndpoint}
+            Method: POST
             Authentication:
               ConnectionArn: ${EventsApiConnectionArn}
             RequestBody:
-              channel.$: $.channel
-              events.$: States.Array($.encoded)
+              channel: "{% 'flights/events/' & $states.input.flight.(airlineCode & '/' & flightNum) %}"
+              events: "{% [ $string($states.input.flight) ] %}"
             Headers:
               Content-Type: application/json
           Retry:
@@ -38,3 +31,4 @@ States:
               JitterStrategy: FULL
           End: true
     End: true
+    

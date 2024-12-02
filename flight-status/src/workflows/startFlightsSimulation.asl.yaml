@@ -1,48 +1,43 @@
+QueryLanguage: JSONata
 Comment: Start flights simulation
 StartAt: List current executions
 States:
   List current executions:
     Type: Task
-    Parameters:
-      StateMachineArn.$: $$.StateMachine.Id
-      StatusFilter: RUNNING
     Resource: arn:aws:states:::aws-sdk:sfn:listExecutions
     Next: Choice
-    ResultPath: $.executions
-    ResultSelector:
-      running.$: $.Executions[-1:]
+    Arguments:
+      StateMachineArn: '{% $states.context.StateMachine.Id %}'
+      StatusFilter: RUNNING
+    Output:
+      running: '{% $reverse($states.result.Executions) %}'
+    Assign:
+      flights: '{% $states.input.flights %}'
   Choice:
     Type: Choice
-    Choices:
-      - Variable: $.executions.running[0].Name
-        StringEqualsPath: $$.Execution.Name
-        Next: Simulate flights
     Default: Success
+    Choices:
+      - Next: Simulate flights
+        Condition: '{% $states.input.running[0].Name = $states.context.Execution.Name %}'
   Simulate flights:
     Type: Map
-    ItemsPath: $.flights
+    Items: '{% $flights %}'
     Next: Success
     ItemProcessor:
       ProcessorConfig:
         Mode: INLINE
-      StartAt: Set random wait
+      StartAt: Wait
       States:
-        Set random wait:
-          Type: Pass
-          Parameters:
-            wait.$: States.MathRandom(10, ${MaxSecondsToNextFlight})
-          Next: Wait
-          ResultPath: $.timer
         Wait:
           Type: Wait
-          SecondsPath: $.timer.wait
           Next: Simulate flight
+          Seconds: '{% $floor($random() * (${MaxSecondsToNextFlight} - 10)) + 10 %}'
         Simulate flight:
           Type: Task
           Resource: arn:aws:states:::states:startExecution.sync:2
-          Parameters:
-            StateMachineArn: ${MockFlightStatusArn}
-            Input.$: $
           End: true
+          Arguments:
+            StateMachineArn: ${MockFlightStatusArn}
+            Input: '{% $states.input %}'
   Success:
     Type: Succeed

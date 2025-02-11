@@ -1,7 +1,7 @@
 {
   "devDependencies": {
     "@types/aws-lambda": "^8.10.136",
-    "esbuild": "^0.20.2"
+    "esbuild": "^0.25.0"
   },
   "dependencies": {
     "@aws-crypto/sha256-js": "^5.2.0",
